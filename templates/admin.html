@@ -1,0 +1,235 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Attendance Admin</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <style>
+        .font-mono { font-family: 'Courier New', Courier, monospace; }
+    </style>
+</head>
+<body class="bg-gray-100 p-8">
+
+    <div class="max-w-7xl mx-auto space-y-8">
+
+        <!-- Admin Header + Add Employee Button -->
+        <div class="bg-white rounded-lg shadow-md p-6 flex items-center justify-between">
+            <h1 class="text-2xl font-bold text-gray-800">Admin Panel</h1>
+            <button id="toggle-reg"
+                    class="bg-green-600 text-white px-4 py-2 rounded hover:bg-green-700 transition font-semibold">
+                Add New Employee
+            </button>
+        </div>
+
+        <!-- Minimal Register New Employee Section (hidden until button clicked) -->
+        <div id="reg-section" class="bg-white rounded-lg shadow-md p-6 hidden">
+            <div class="grid gap-6 md:grid-cols-2 items-start">
+                <div class="space-y-4">
+                    <div class="relative w-full aspect-video bg-black rounded-lg overflow-hidden">
+                        <video id="reg-video" class="w-full h-full object-cover" autoplay playsinline></video>
+                        <canvas id="reg-canvas" class="hidden"></canvas>
+                    </div>
+                </div>
+                <div class="space-y-3">
+                    <input type="text" id="reg-name" placeholder="Employee name"
+                           class="w-full px-4 py-2 border rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500">
+                    <button onclick="registerEmployee()" class="w-full bg-blue-600 text-white px-4 py-2 rounded hover:bg-blue-700 transition font-semibold">
+                        Capture & Save
+                    </button>
+                    <p id="reg-status" class="text-sm font-semibold h-5 text-gray-600"></p>
+                </div>
+            </div>
+        </div>
+
+        <!-- Attendance Report Section -->
+        <div class="bg-white rounded-lg shadow-md p-6">
+            <div class="flex justify-between items-center mb-6">
+                <div>
+                    <h2 class="text-2xl font-bold text-gray-800">Attendance Report</h2>
+                </div>
+                <button onclick="loadData()" class="bg-blue-600 text-white px-4 py-2 rounded hover:bg-blue-700 transition">Refresh Data</button>
+            </div>
+
+            <div class="overflow-x-auto">
+                <table class="min-w-full bg-white border border-gray-200 shadow-sm rounded-lg">
+                    <thead class="bg-gray-50 border-b border-gray-200">
+                        <tr>
+                            <th class="py-3 px-4 text-left text-xs font-bold text-gray-500 uppercase tracking-wider">Date</th>
+                            <th class="py-3 px-4 text-left text-xs font-bold text-gray-500 uppercase tracking-wider">Name</th>
+                            <th class="py-3 px-4 text-left text-xs font-bold text-gray-500 uppercase tracking-wider">Log In</th>
+                            <th class="py-3 px-4 text-left text-xs font-bold text-gray-500 uppercase tracking-wider">Log Out</th>
+                            <th class="py-3 px-4 text-left text-xs font-bold text-gray-500 uppercase tracking-wider">Daily Hrs</th>
+                            <th class="py-3 px-4 text-left text-xs font-bold text-gray-500 uppercase tracking-wider">Monthly Hrs</th>
+                        </tr>
+                    </thead>
+                    <tbody id="table-body" class="divide-y divide-gray-200 text-sm">
+                        <!-- Rows will be inserted here -->
+                    </tbody>
+                </table>
+            </div>
+        </div>
+
+    </div>
+
+    <script>
+        // ---- Attendance Report Loader (read-only) ----
+        async function loadData() {
+            const res = await fetch('/api/report');
+            const rawLogs = await res.json();
+            
+            // 1. Group logs by "Name-Date"
+            let dailyRecords = {};
+            let monthlyHours = {}; // Key: "Name-Month" (e.g., "John-2023-11")
+
+            // Sort logs by time (oldest first) to ensure pairs match correctly
+            rawLogs.sort((a, b) => new Date(a.date + ' ' + a.time) - new Date(b.date + ' ' + b.time));
+
+            rawLogs.forEach(log => {
+                let key = `${log.name}-${log.date}`;
+                
+                if (!dailyRecords[key]) {
+                    dailyRecords[key] = {
+                        name: log.name,
+                        date: log.date,
+                        logins: [],
+                        logouts: [],
+                        totalSeconds: 0
+                    };
+                }
+
+                if (log.type === 'LOGIN') dailyRecords[key].logins.push(log.time);
+                if (log.type === 'LOGOUT') dailyRecords[key].logouts.push(log.time);
+            });
+
+            // 2. Calculate Hours
+            Object.values(dailyRecords).forEach(day => {
+                let seconds = 0;
+                // Match the ith Login with the ith Logout
+                for (let i = 0; i < day.logins.length; i++) {
+                    if (day.logouts[i]) {
+                        let start = new Date(`${day.date}T${day.logins[i]}`);
+                        let end = new Date(`${day.date}T${day.logouts[i]}`);
+                        seconds += (end - start) / 1000;
+                    }
+                }
+                day.totalSeconds = seconds;
+
+                // Add to monthly total
+                let monthKey = `${day.name}-${day.date.substring(0, 7)}`; // e.g. "John-2023-10"
+                if (!monthlyHours[monthKey]) monthlyHours[monthKey] = 0;
+                monthlyHours[monthKey] += seconds;
+            });
+
+            // 3. Render Table
+            const tbody = document.getElementById('table-body');
+            tbody.innerHTML = '';
+
+            // Convert object back to array and sort by date desc
+            let sortedDays = Object.values(dailyRecords).sort((a, b) => new Date(b.date) - new Date(a.date));
+
+            sortedDays.forEach(day => {
+                let monthKey = `${day.name}-${day.date.substring(0, 7)}`;
+                let monthTotal = (monthlyHours[monthKey] / 3600).toFixed(2);
+                let dayTotal = (day.totalSeconds / 3600).toFixed(2);
+
+                const tr = document.createElement('tr');
+                tr.className = "hover:bg-gray-50 transition";
+                
+                // Get first login and last logout for display
+                let firstIn = day.logins.length > 0 ? day.logins[0] : '-';
+                let lastOut = day.logouts.length > 0 ? day.logouts[day.logouts.length - 1] : '-';
+
+                tr.innerHTML = `
+                    <td class="py-3 px-4 text-gray-700">${day.date}</td>
+                    <td class="py-3 px-4 font-semibold text-gray-900">${day.name}</td>
+                    <td class="py-3 px-4 font-mono text-green-600">${firstIn}</td>
+                    <td class="py-3 px-4 font-mono text-orange-600">${lastOut}</td>
+                    <td class="py-3 px-4 font-bold text-gray-800">${dayTotal} hrs</td>
+                    <td class="py-3 px-4 text-gray-600">${monthTotal} hrs</td>
+                `;
+                tbody.appendChild(tr);
+            });
+        }
+
+        // ---- Admin Registration Logic ----
+        const regSection = document.getElementById('reg-section');
+        const toggleRegBtn = document.getElementById('toggle-reg');
+        const regVideo = document.getElementById('reg-video');
+        const regCanvas = document.getElementById('reg-canvas');
+        const regStatus = document.getElementById('reg-status');
+
+        async function startAdminCamera() {
+            try {
+                const stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: 'user' } });
+                regVideo.srcObject = stream;
+            } catch (err) {
+                regStatus.innerText = "Camera access denied";
+                regStatus.className = "text-sm font-semibold h-5 text-red-600";
+            }
+        }
+
+        // Toggle register section on button click
+        toggleRegBtn.addEventListener('click', () => {
+            if (regSection.classList.contains('hidden')) {
+                regSection.classList.remove('hidden');
+                startAdminCamera();
+            } else {
+                regSection.classList.add('hidden');
+                regStatus.innerText = "";
+            }
+        });
+
+        async function registerEmployee() {
+            const nameInput = document.getElementById('reg-name');
+            const name = nameInput.value.trim();
+
+            if (!name) {
+                regStatus.innerText = "Please enter employee name";
+                regStatus.className = "text-sm font-semibold h-5 text-red-600";
+                return;
+            }
+
+            regStatus.innerText = "Capturing face...";
+            regStatus.className = "text-sm font-semibold h-5 text-yellow-600";
+
+            regCanvas.width = regVideo.videoWidth;
+            regCanvas.height = regVideo.videoHeight;
+            regCanvas.getContext('2d').drawImage(regVideo, 0, 0);
+            const image = regCanvas.toDataURL('image/jpeg', 0.8);
+
+            try {
+                const res = await fetch('/register', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ name, image })
+                });
+                const data = await res.json();
+
+                if (data.status === 'success') {
+                    regStatus.innerText = data.message || "Employee registered successfully";
+                    regStatus.className = "text-sm font-semibold h-5 text-green-600";
+                    nameInput.value = "";
+
+                    // After a short delay, hide scan section and focus back on table
+                    setTimeout(() => {
+                        regSection.classList.add('hidden');
+                        regStatus.innerText = "";
+                    }, 2000);
+                } else {
+                    regStatus.innerText = data.message || "Registration failed";
+                    regStatus.className = "text-sm font-semibold h-5 text-red-600";
+                }
+            } catch (e) {
+                regStatus.innerText = "Server error during registration";
+                regStatus.className = "text-sm font-semibold h-5 text-red-600";
+            }
+        }
+
+        // Initialize admin page
+        loadData();
+        // Auto refresh report every 10 seconds
+        setInterval(loadData, 10000);
+    </script>
+</body>
+</html>

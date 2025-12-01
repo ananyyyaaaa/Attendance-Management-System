@@ -1,2 +1,10 @@
-cmake
+flask
+flask-cors
+face_recognition
+numpy<2
+opencv-python-headless
 gunicorn
+psycopg2-binary
+cmake
+python-dotenv
+Pillow

@@ -3,144 +3,182 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Office Attendance</title>
+    <title>Face Attendance System</title>
     <script src="https://cdn.tailwindcss.com"></script>
-    <style> video { transform: scaleX(-1); } </style>
+    <style>
+        body { font-family: 'sangbleu', serif; }
+        video { transform: scaleX(-1); } /* Mirror the webcam */
+    </style>
 </head>
-<body class="bg-slate-900 text-white min-h-screen flex flex-col items-center p-4 font-sans">
+<body class="bg-slate-200 min-h-screen flex flex-col">
 
-    <!-- Header -->
-    <div class="w-full max-w-md flex justify-between items-center mb-6">
-        <h1 class="text-xl font-bold tracking-tight">System<span class="text-blue-500">Active</span></h1>
-        <div id="live-clock" class="text-xs bg-slate-800 px-2 py-1 rounded">00:00</div>
-    </div>
-
-    <!-- Camera Viewport -->
-    <div class="relative w-full max-w-md aspect-[3/4] bg-black rounded-2xl overflow-hidden shadow-2xl border border-slate-700">
-        <video id="video" class="w-full h-full object-cover" autoplay playsinline></video>
-        <canvas id="canvas" class="hidden"></canvas>
-        
-        <!-- Action Area -->
-        <div class="absolute bottom-0 w-full p-4 bg-gradient-to-t from-black via-black/80 to-transparent pt-10">
-            <div id="message" class="text-center font-bold text-lg mb-3 min-h-[1.5rem] drop-shadow-md"></div>
-            
-            <!-- Scan Mode Buttons -->
-            <div id="mode-scan" class="flex gap-2">
-                <button onclick="capture('/scan')" class="w-full bg-blue-600 hover:bg-blue-500 text-white font-bold py-4 rounded-xl shadow-lg transition active:scale-95">
-                    SCAN FACE
-                </button>
-            </div>
-
-            <!-- Register Mode Buttons -->
-            <div id="mode-register" class="hidden flex flex-col gap-2">
-                <input type="text" id="reg-name" placeholder="Full Name" class="w-full p-3 rounded-lg bg-slate-800 border border-slate-600 text-white text-center focus:border-blue-500 outline-none">
-                <div class="flex gap-2">
-                    <button onclick="switchMode('scan')" class="px-4 bg-slate-700 rounded-lg">Back</button>
-                    <button onclick="capture('/register')" class="flex-1 bg-green-600 hover:bg-green-500 text-white font-bold py-3 rounded-lg">SAVE</button>
-                </div>
+    <!-- Minimal Header -->
+    <header class="w-full border-b border-sky-500 bg-sky-600">
+        <div class="max-w-5xl mx-auto flex items-center justify-between px-6 py-4">
+            <div class="text-2xl font-semibold tracking-wide">
+                <span class="text-white">Office</span><span class="text-sky-300">Scan</span>
             </div>
         </div>
-    </div>
+    </header>
 
-    <!-- Tabs -->
-    <div class="mt-6 flex bg-slate-800 p-1 rounded-lg">
-        <button onclick="switchMode('scan')" id="tab-scan" class="flex-1 py-2 rounded-md text-sm font-medium bg-slate-600 text-white shadow">Attendance</button>
-        <button onclick="switchMode('register')" id="tab-reg" class="flex-1 py-2 rounded-md text-sm font-medium text-slate-400">Register</button>
-    </div>
+    <!-- Main Content -->
+    <main class="flex-1 w-full justify-top items-top px-4 py-10">
+        <div class="bg-white/95 backdrop-blur-sm p-8 rounded-2xl shadow-2xl w-full max-w-md border border-slate-100">
+            <h1 class="text-lg font-semibold text-gray-900 mb-3">Attendance</h1>
+            <p class="text-xs text-gray-500 mb-5">Look at the camera and tap scan to log in or out.</p>
 
-    <!-- Logs -->
-    <div class="w-full max-w-md mt-6">
-        <h3 class="text-slate-500 text-xs font-bold uppercase tracking-wider mb-2">Recent Scans</h3>
-        <div id="logs" class="space-y-2 text-sm text-slate-300">Loading...</div>
-    </div>
+            <!-- Camera Feed -->
+            <div class="relative w-full h-64 bg-black rounded-xl overflow-hidden mb-5">
+                <video id="video" class="w-full h-full object-cover" autoplay playsinline></video>
+                <canvas id="canvas" class="hidden"></canvas>
+
+                <!-- Result Overlay -->
+                <div id="result-overlay" class="absolute inset-0 flex items-center justify-center bg-black/40 opacity-0 pointer-events-none transition-opacity duration-300">
+                    <div id="result-card" class="w-64 rounded-2xl p-5 text-center text-white shadow-2xl">
+                        <div id="result-icon" class="text-4xl mb-3">✔</div>
+                        <div id="result-title" class="text-lg font-semibold mb-1"></div>
+                        <div id="result-name" class="text-sm font-medium mb-1"></div>
+                        <div id="result-subtitle" class="text-xs mb-1"></div>
+                        <div id="result-meta" class="text-[11px] text-gray-100/80"></div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Action Button -->
+            <button id="action-btn" onclick="takeAction()" class="w-full bg-sky-600 hover:bg-sky-700 text-white font-semibold py-3 rounded-lg transition duration-200">
+                Scan Face
+            </button>
+
+            <!-- Status Message -->
+            <div id="status" class="mt-4 text-center text-xs font-semibold h-6 text-gray-600"></div>
+        </div>
+    </main>
 
     <script>
+        // API Configuration
+        const API_URL = "http://127.0.0.1:5000"; 
         const video = document.getElementById('video');
         const canvas = document.getElementById('canvas');
-        const msg = document.getElementById('message');
+        const statusDiv = document.getElementById('status');
+        const actionBtn = document.getElementById('action-btn');
+        const headerClock = document.getElementById('header-clock');
+        const resultOverlay = document.getElementById('result-overlay');
+        const resultCard = document.getElementById('result-card');
+        const resultIcon = document.getElementById('result-icon');
+        const resultTitle = document.getElementById('result-title');
+        const resultName = document.getElementById('result-name');
+        const resultSubtitle = document.getElementById('result-subtitle');
+        const resultMeta = document.getElementById('result-meta');
 
-        // Start Camera
-        navigator.mediaDevices.getUserMedia({ video: { facingMode: 'user' } })
-            .then(s => video.srcObject = s)
-            .catch(e => msg.innerText = "Camera Access Denied");
+        // Start Webcam
+        async function startCamera() {
+            try {
+                const stream = await navigator.mediaDevices.getUserMedia({ video: true });
+                video.srcObject = stream;
+            } catch (err) {
+                statusDiv.innerText = "Error: Camera access denied";
+                statusDiv.className = "mt-4 text-center text-sm font-semibold h-6 text-red-600";
+            }
+        }
 
-        async function capture(endpoint) {
-            msg.innerText = "Processing...";
-            msg.className = "text-center font-bold text-lg mb-3 text-yellow-400";
+        function updateClock() {
+            if (!headerClock) return;
+            const now = new Date();
+            const dateStr = now.toLocaleDateString(undefined, { weekday: 'short', year: 'numeric', month: 'short', day: 'numeric' });
+            const timeStr = now.toLocaleTimeString(undefined, { hour: '2-digit', minute: '2-digit' });
+            headerClock.textContent = `${dateStr} · ${timeStr}`;
+        }
 
-            // Draw video frame to canvas
-            canvas.width = video.videoWidth;
-            canvas.height = video.videoHeight;
-            canvas.getContext('2d').drawImage(video, 0, 0);
-            const image = canvas.toDataURL('image/jpeg', 0.8);
-
-            const payload = { image: image };
-            if (endpoint === '/register') {
-                const name = document.getElementById('reg-name').value;
-                if (!name) return alert("Enter a name!");
-                payload.name = name;
+        function showResult(mode, title, subtitle, nameText, metaText) {
+            // Set card style based on mode
+            if (mode === 'login') {
+                // Green, slightly transparent
+                resultCard.className = "w-64 rounded-xl p-5 text-center text-white shadow-2xl bg-green-500/80";
+                resultIcon.textContent = "✔";
+            } else if (mode === 'logout') {
+                // Blue, slightly transparent
+                resultCard.className = "w-64 rounded-xl p-5 text-center text-white shadow-2xl bg-blue-500/80";
+                resultIcon.textContent = "✔";
+            } else {
+                // Error (red)
+                resultCard.className = "w-64 rounded-xl p-5 text-center text-white shadow-2xl bg-red-600/80";
+                resultIcon.textContent = "⦸";
             }
 
+            resultTitle.textContent = title;
+            resultName.textContent = nameText || "";
+            resultSubtitle.textContent = subtitle || "";
+            resultMeta.textContent = metaText || "";
+
+            // Show overlay
+            resultOverlay.classList.remove('opacity-0', 'pointer-events-none');
+
+            // Auto-hide and soft refresh after a short delay
+            setTimeout(() => {
+                resultOverlay.classList.add('opacity-0', 'pointer-events-none');
+                statusDiv.innerText = "";
+            }, 2500);
+        }
+
+        // Capture and Send
+        async function takeAction() {
+            // 1. Capture Image
+            const context = canvas.getContext('2d');
+            canvas.width = video.videoWidth;
+            canvas.height = video.videoHeight;
+            context.drawImage(video, 0, 0, canvas.width, canvas.height);
+            const imageData = canvas.toDataURL('image/jpeg');
+
+            statusDiv.innerText = "Processing...";
+            statusDiv.className = "mt-4 text-center text-sm font-semibold h-6 text-yellow-600";
+
+            // 2. Prepare Payload for scan-only attendance
+            let endpoint = '/scan';
+            let payload = { image: imageData };
+
+            // 3. Send to Python Server
             try {
-                const res = await fetch(endpoint, {
+                const response = await fetch(`${API_URL}${endpoint}`, {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
                     body: JSON.stringify(payload)
                 });
-                const data = await res.json();
-                
-                if (data.status === 'success') {
-                    msg.innerText = endpoint === '/scan' ? `Welcome, ${data.name}!` : "Registered!";
-                    msg.className = "text-center font-bold text-lg mb-3 text-green-400";
-                    if(endpoint === '/register') {
-                        document.getElementById('reg-name').value = '';
-                        switchMode('scan');
+
+                const result = await response.json();
+
+                if (result.status === 'success') {
+                    const now = new Date();
+                    const timeStr = now.toLocaleTimeString(undefined, { hour: '2-digit', minute: '2-digit' });
+                    const dateStr = now.toLocaleDateString(undefined, { year: 'numeric', month: 'short', day: 'numeric' });
+                    const meta = `${dateStr} · ${timeStr}`;
+
+                    if (result.type === 'LOGIN') {
+                        statusDiv.className = "mt-4 text-center text-xs font-semibold h-6 text-green-600";
+                        showResult('login', 'Welcome', result.name || '', 'Logged In', meta);
+                    } else if (result.type === 'LOGOUT') {
+                        statusDiv.className = "mt-4 text-center text-xs font-semibold h-6 text-blue-600";
+                        showResult('logout', 'Goodbye', result.name || '', 'Logged Out', meta);
+                    } else {
+                        statusDiv.className = "mt-4 text-center text-xs font-semibold h-6 text-green-600";
+                        showResult('login', 'Success', result.name || '', result.message || '', meta);
                     }
-                    loadLogs();
                 } else {
-                    msg.innerText = data.message;
-                    msg.className = "text-center font-bold text-lg mb-3 text-red-500";
+                    const detail = result.message || "We didn't recognise you";
+                    statusDiv.className = "mt-4 text-center text-xs font-semibold h-6 text-red-600";
+                    showResult('error', 'Sorry!', detail, '', 'Try scanning again');
                 }
-            } catch (e) {
-                msg.innerText = "Server Error";
+            } catch (error) {
+                console.error(error);
+                statusDiv.innerText = "Error connecting to server";
+                statusDiv.className = "mt-4 text-center text-xs font-semibold h-6 text-red-600";
+                showResult('error', 'Error', 'Could not connect to server', '', '');
             }
         }
 
-        function switchMode(mode) {
-            msg.innerText = "";
-            document.getElementById('mode-scan').className = mode === 'scan' ? 'flex gap-2' : 'hidden';
-            document.getElementById('mode-register').className = mode === 'register' ? 'hidden flex flex-col gap-2' : 'hidden'; // Correction: remove hidden if register
-            
-            if(mode === 'register') {
-                 document.getElementById('mode-register').classList.remove('hidden');
-                 document.getElementById('tab-reg').className = "flex-1 py-2 rounded-md text-sm font-medium bg-slate-600 text-white shadow";
-                 document.getElementById('tab-scan').className = "flex-1 py-2 rounded-md text-sm font-medium text-slate-400";
-            } else {
-                 document.getElementById('mode-register').classList.add('hidden');
-                 document.getElementById('tab-scan').className = "flex-1 py-2 rounded-md text-sm font-medium bg-slate-600 text-white shadow";
-                 document.getElementById('tab-reg').className = "flex-1 py-2 rounded-md text-sm font-medium text-slate-400";
-            }
-        }
-
-        async function loadLogs() {
-            try {
-                const res = await fetch('/logs');
-                const data = await res.json();
-                const container = document.getElementById('logs');
-                container.innerHTML = data.map(l => `
-                    <div class="bg-slate-800 p-3 rounded flex justify-between border-l-4 border-blue-500">
-                        <span class="font-medium text-white">${l[0]}</span>
-                        <span class="text-slate-400">${new Date(l[1]).toLocaleTimeString()}</span>
-                    </div>
-                `).join('');
-            } catch(e) {}
-        }
-        
-        setInterval(() => {
-            document.getElementById('live-clock').innerText = new Date().toLocaleTimeString([], {hour:'2-digit', minute:'2-digit'});
-        }, 1000);
-        
-        loadLogs();
+        // Initialize
+        startCamera();
+        updateClock();
+        setInterval(updateClock, 60000);
     </script>
 </body>
 </html>
