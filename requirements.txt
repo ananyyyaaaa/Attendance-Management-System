@@ -1,3 +1,4 @@
+git+https://github.com/ageitgey/face_recognition_models
 flask
 flask-cors
 face_recognition
