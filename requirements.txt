@@ -1,12 +1,13 @@
-git+https://github.com/ageitgey/face_recognition_models
+cmake
+dlib
+face_recognition_models
+face_recognition
 flask
 flask-cors
-face_recognition
 numpy<2
 opencv-python-headless
 gunicorn
 psycopg2-binary
-cmake
 python-dotenv
 Pillow
 pytz
