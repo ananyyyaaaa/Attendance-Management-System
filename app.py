@@ -174,8 +174,8 @@ def report():
             
         data.append({
             "name": n,
-            "date": t_obj.strftime("%Y-%m-%d"),
-            "time": t_obj.strftime("%H:%M:%S"),
+            "date": t_obj.strftime("%d-%m-%Y"),
+            "time": t_obj.strftime("%H:%M"),
             "type": s
         })
     return jsonify(data)

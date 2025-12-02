@@ -73,6 +73,18 @@
     </div>
 
     <script>
+        // ---- HELPER: Parse "DD-MM-YYYY" to JS Date Object ----
+        function parseCustomDate(dateStr, timeStr) {
+            // Split "02-12-2025" into [02, 12, 2025]
+            const [day, month, year] = dateStr.split('-').map(Number);
+            
+            // Split "09:30" into [09, 30]
+            const [hours, minutes] = timeStr.split(':').map(Number);
+
+            // Create Date (Note: Month is 0-indexed in JS, so we do month - 1)
+            return new Date(year, month - 1, day, hours, minutes);
+        }
+
         // ---- Attendance Report Loader (read-only) ----
         async function loadData() {
             const res = await fetch('/api/report');
@@ -80,10 +92,12 @@
             
             // 1. Group logs by "Name-Date"
             let dailyRecords = {};
-            let monthlyHours = {}; // Key: "Name-Month" (e.g., "John-2023-11")
+            let monthlyHours = {}; 
 
-            // Sort logs by time (oldest first) to ensure pairs match correctly
-            rawLogs.sort((a, b) => new Date(a.date + ' ' + a.time) - new Date(b.date + ' ' + b.time));
+            // FIX: Use helper function for sorting
+            rawLogs.sort((a, b) => {
+                return parseCustomDate(a.date, a.time) - parseCustomDate(b.date, b.time);
+            });
 
             rawLogs.forEach(log => {
                 let key = `${log.name}-${log.date}`;
@@ -108,15 +122,20 @@
                 // Match the ith Login with the ith Logout
                 for (let i = 0; i < day.logins.length; i++) {
                     if (day.logouts[i]) {
-                        let start = new Date(`${day.date}T${day.logins[i]}`);
-                        let end = new Date(`${day.date}T${day.logouts[i]}`);
+                        // FIX: Use helper function for Math
+                        let start = parseCustomDate(day.date, day.logins[i]);
+                        let end = parseCustomDate(day.date, day.logouts[i]);
+                        
                         seconds += (end - start) / 1000;
                     }
                 }
                 day.totalSeconds = seconds;
 
                 // Add to monthly total
-                let monthKey = `${day.name}-${day.date.substring(0, 7)}`; // e.g. "John-2023-10"
+                // Extract month key from DD-MM-YYYY -> "Name-MM-YYYY"
+                let monthPart = day.date.substring(3); // Grab "12-2025" part
+                let monthKey = `${day.name}-${monthPart}`;
+                
                 if (!monthlyHours[monthKey]) monthlyHours[monthKey] = 0;
                 monthlyHours[monthKey] += seconds;
             });
@@ -126,17 +145,21 @@
             tbody.innerHTML = '';
 
             // Convert object back to array and sort by date desc
-            let sortedDays = Object.values(dailyRecords).sort((a, b) => new Date(b.date) - new Date(a.date));
+            let sortedDays = Object.values(dailyRecords).sort((a, b) => {
+                 // Sort using helper so latest date is top
+                 return parseCustomDate(b.date, "00:00") - parseCustomDate(a.date, "00:00");
+            });
 
             sortedDays.forEach(day => {
-                let monthKey = `${day.name}-${day.date.substring(0, 7)}`;
+                let monthPart = day.date.substring(3);
+                let monthKey = `${day.name}-${monthPart}`;
+                
                 let monthTotal = (monthlyHours[monthKey] / 3600).toFixed(2);
                 let dayTotal = (day.totalSeconds / 3600).toFixed(2);
 
                 const tr = document.createElement('tr');
                 tr.className = "hover:bg-gray-50 transition";
                 
-                // Get first login and last logout for display
                 let firstIn = day.logins.length > 0 ? day.logins[0] : '-';
                 let lastOut = day.logouts.length > 0 ? day.logouts[day.logouts.length - 1] : '-';
 
@@ -169,7 +192,6 @@
             }
         }
 
-        // Toggle register section on button click
         toggleRegBtn.addEventListener('click', () => {
             if (regSection.classList.contains('hidden')) {
                 regSection.classList.remove('hidden');
@@ -211,7 +233,6 @@
                     regStatus.className = "text-sm font-semibold h-5 text-green-600";
                     nameInput.value = "";
 
-                    // After a short delay, hide scan section and focus back on table
                     setTimeout(() => {
                         regSection.classList.add('hidden');
                         regStatus.innerText = "";
@@ -226,9 +247,7 @@
             }
         }
 
-        // Initialize admin page
         loadData();
-        // Auto refresh report every 10 seconds
         setInterval(loadData, 10000);
     </script>
 </body>
