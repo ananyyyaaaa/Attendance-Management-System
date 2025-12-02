@@ -9,7 +9,7 @@ import psycopg2
 from psycopg2 import pool
 import pytz
 import requests
-import PIL.Image  # <--- Essential fix for image errors
+import PIL.Image  
 from flask import Flask, request, jsonify, render_template
 from flask_cors import CORS
 from dotenv import load_dotenv
