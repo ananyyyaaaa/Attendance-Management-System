@@ -1,6 +1,6 @@
 cmake
 dlib
-face_recognition_models>0.3.0
+face_recognition_models>=0.3.0
 face_recognition
 flask
 flask-cors
