@@ -8,3 +8,6 @@ psycopg2-binary
 cmake
 python-dotenv
 Pillow
+pytz
+APScheduler
+requests

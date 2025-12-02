@@ -3,166 +3,287 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Attendance Admin</title>
+    <title>Management Admin</title>
     <script src="https://cdn.tailwindcss.com"></script>
     <style>
         .font-mono { font-family: 'Courier New', Courier, monospace; }
+        /* Smooth fade for toggling sections */
+        .fade-in { animation: fadeIn 0.3s ease-in-out; }
+        @keyframes fadeIn { from { opacity: 0; } to { opacity: 1; } }
     </style>
 </head>
 <body class="bg-gray-100 p-8">
 
     <div class="max-w-7xl mx-auto space-y-8">
 
-        <!-- Admin Header + Add Employee Button -->
-        <div class="bg-white rounded-lg shadow-md p-6 flex items-center justify-between">
+        <div class="bg-white rounded-lg shadow-md p-6 flex flex-col md:flex-row items-center justify-between gap-4">
             <h1 class="text-2xl font-bold text-gray-800">Admin Panel</h1>
-            <button id="toggle-reg"
-                    class="bg-green-600 text-white px-4 py-2 rounded hover:bg-green-700 transition font-semibold">
-                Add New Employee
-            </button>
+            
+            <div class="flex gap-3">
+                <button id="view-toggle-btn" onclick="toggleView()"
+                        class="bg-yellow-500 text-white px-6 py-2 rounded shadow hover:bg-yellow-600 transition font-bold tracking-wide">
+                    Client Report
+                </button>
+
+                <button id="add-emp-btn" onclick="toggleEmployeeForm()"
+                        class="bg-green-600 text-white px-4 py-2 rounded hover:bg-green-700 transition font-semibold">
+                    + New Employee
+                </button>
+            </div>
         </div>
 
-        <!-- Minimal Register New Employee Section (hidden until button clicked) -->
-        <div id="reg-section" class="bg-white rounded-lg shadow-md p-6 hidden">
-            <div class="grid gap-6 md:grid-cols-2 items-start">
-                <div class="space-y-4">
-                    <div class="relative w-full aspect-video bg-black rounded-lg overflow-hidden">
-                        <video id="reg-video" class="w-full h-full object-cover" autoplay playsinline></video>
-                        <canvas id="reg-canvas" class="hidden"></canvas>
+        <div id="attendance-section" class="fade-in space-y-8">
+            
+            <div id="reg-section" class="bg-white rounded-lg shadow-md p-6 hidden">
+                <div class="grid gap-6 md:grid-cols-2 items-start">
+                    <div class="space-y-4">
+                        <div class="relative w-full aspect-video bg-black rounded-lg overflow-hidden">
+                            <video id="reg-video" class="w-full h-full object-cover" autoplay playsinline></video>
+                            <canvas id="reg-canvas" class="hidden"></canvas>
+                        </div>
+                    </div>
+                    <div class="space-y-3">
+                        <h3 class="font-bold text-lg text-gray-700">Register New Face</h3>
+                        <input type="text" id="reg-name" placeholder="Employee Name"
+                               class="w-full px-4 py-2 border rounded-lg focus:outline-none focus:ring-2 focus:ring-green-500">
+                        <input type="email" id="reg-email" placeholder="Employee Email" 
+                                class="w-full px-4 py-2 border rounded-lg">
+                        <button onclick="registerEmployee()" class="w-full bg-green-600 text-white px-4 py-2 rounded hover:bg-green-700 transition font-semibold">
+                            Capture & Save
+                        </button>
+                        <p id="reg-status" class="text-sm font-semibold h-5 text-gray-600"></p>
                     </div>
                 </div>
-                <div class="space-y-3">
-                    <input type="text" id="reg-name" placeholder="Employee name"
-                           class="w-full px-4 py-2 border rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500">
-                    <button onclick="registerEmployee()" class="w-full bg-blue-600 text-white px-4 py-2 rounded hover:bg-blue-700 transition font-semibold">
-                        Capture & Save
-                    </button>
-                    <p id="reg-status" class="text-sm font-semibold h-5 text-gray-600"></p>
+            </div>
+
+            <div class="bg-white rounded-lg shadow-md p-6">
+                <div class="flex justify-between items-center mb-6">
+                    <h2 class="text-2xl font-bold text-gray-800">Attendance Report</h2>
+                    <button onclick="loadAttendanceData()" class="text-blue-600 hover:underline">Refresh</button>
+                </div>
+                <div class="overflow-x-auto">
+                    <table class="min-w-full bg-white border border-gray-200 shadow-sm rounded-lg">
+                        <thead class="bg-gray-50 border-b border-gray-200">
+                            <tr>
+                                <th class="py-3 px-4 text-left text-xs font-bold text-gray-500 uppercase">Date</th>
+                                <th class="py-3 px-4 text-left text-xs font-bold text-gray-500 uppercase">Name</th>
+                                <th class="py-3 px-4 text-left text-xs font-bold text-gray-500 uppercase">Log In</th>
+                                <th class="py-3 px-4 text-left text-xs font-bold text-gray-500 uppercase">Log Out</th>
+                                <th class="py-3 px-4 text-left text-xs font-bold text-gray-500 uppercase">Daily Hrs</th>
+                                <th class="py-3 px-4 text-left text-xs font-bold text-gray-500 uppercase">Monthly Hrs</th>
+                            </tr>
+                        </thead>
+                        <tbody id="att-table-body" class="divide-y divide-gray-200 text-sm"></tbody>
+                    </table>
                 </div>
             </div>
         </div>
 
-        <!-- Attendance Report Section -->
-        <div class="bg-white rounded-lg shadow-md p-6">
-            <div class="flex justify-between items-center mb-6">
-                <div>
-                    <h2 class="text-2xl font-bold text-gray-800">Attendance Report</h2>
+        <div id="client-section" class="fade-in space-y-8 hidden">
+            
+            <div class="bg-white rounded-lg shadow-md p-6">
+                <h3 class="font-bold text-lg text-gray-700 mb-4">Add New Client</h3>
+                <div class="grid grid-cols-1 md:grid-cols-5 gap-4 items-end">
+                    <div class="md:col-span-1">
+                        <label class="text-xs font-bold text-gray-500 uppercase">Client Name</label>
+                        <input type="text" id="client-name" class="w-full border p-2 rounded mt-1" placeholder="Company ABC">
+                    </div>
+                    <div class="md:col-span-1">
+                        <label class="text-xs font-bold text-gray-500 uppercase">Start Date</label>
+                        <input type="date" id="client-start" class="w-full border p-2 rounded mt-1">
+                    </div>
+                    <div class="md:col-span-1">
+                        <label class="text-xs font-bold text-gray-500 uppercase">End Date</label>
+                        <input type="date" id="client-end" class="w-full border p-2 rounded mt-1">
+                    </div>
+                    <div class="md:col-span-1">
+                        <label class="text-xs font-bold text-gray-500 uppercase">Cost (₹)</label>
+                        <input type="number" id="client-cost" class="w-full border p-2 rounded mt-1" placeholder="50000">
+                    </div>
+                    <div class="md:col-span-1">
+                        <button onclick="addClient()" class="w-full bg-blue-600 text-white p-2 rounded hover:bg-blue-700 transition font-bold">
+                            + Add Client
+                        </button>
+                    </div>
                 </div>
-                <button onclick="loadData()" class="bg-blue-600 text-white px-4 py-2 rounded hover:bg-blue-700 transition">Refresh Data</button>
             </div>
 
-            <div class="overflow-x-auto">
-                <table class="min-w-full bg-white border border-gray-200 shadow-sm rounded-lg">
-                    <thead class="bg-gray-50 border-b border-gray-200">
-                        <tr>
-                            <th class="py-3 px-4 text-left text-xs font-bold text-gray-500 uppercase tracking-wider">Date</th>
-                            <th class="py-3 px-4 text-left text-xs font-bold text-gray-500 uppercase tracking-wider">Name</th>
-                            <th class="py-3 px-4 text-left text-xs font-bold text-gray-500 uppercase tracking-wider">Log In</th>
-                            <th class="py-3 px-4 text-left text-xs font-bold text-gray-500 uppercase tracking-wider">Log Out</th>
-                            <th class="py-3 px-4 text-left text-xs font-bold text-gray-500 uppercase tracking-wider">Daily Hrs</th>
-                            <th class="py-3 px-4 text-left text-xs font-bold text-gray-500 uppercase tracking-wider">Monthly Hrs</th>
-                        </tr>
-                    </thead>
-                    <tbody id="table-body" class="divide-y divide-gray-200 text-sm">
-                        <!-- Rows will be inserted here -->
-                    </tbody>
-                </table>
+            <div class="bg-white rounded-lg shadow-md p-6">
+                <div class="flex justify-between items-center mb-6">
+                    <h2 class="text-2xl font-bold text-gray-800">Client Packages</h2>
+                    <button onclick="loadClientData()" class="text-blue-600 hover:underline">Refresh</button>
+                </div>
+                <div class="overflow-x-auto">
+                    <table class="min-w-full bg-white border border-gray-200 shadow-sm rounded-lg">
+                        <thead class="bg-blue-50 border-b border-blue-100">
+                            <tr>
+                                <th class="py-3 px-4 text-left text-xs font-bold text-blue-800 uppercase">Client Name</th>
+                                <th class="py-3 px-4 text-left text-xs font-bold text-blue-800 uppercase">Start Date</th>
+                                <th class="py-3 px-4 text-left text-xs font-bold text-blue-800 uppercase">End Date</th>
+                                <th class="py-3 px-4 text-left text-xs font-bold text-blue-800 uppercase">Cost</th>
+                                <th class="py-3 px-4 text-left text-xs font-bold text-blue-800 uppercase">Duration</th>
+                            </tr>
+                        </thead>
+                        <tbody id="client-table-body" class="divide-y divide-gray-200 text-sm"></tbody>
+                    </table>
+                </div>
             </div>
         </div>
 
     </div>
 
     <script>
-        // ---- HELPER: Parse "DD-MM-YYYY" to JS Date Object ----
-        function parseCustomDate(dateStr, timeStr) {
-            // Split "02-12-2025" into [02, 12, 2025]
-            const [day, month, year] = dateStr.split('-').map(Number);
-            
-            // Split "09:30" into [09, 30]
-            const [hours, minutes] = timeStr.split(':').map(Number);
+        // ================= STATE MANAGEMENT =================
+        let currentView = 'attendance'; // 'attendance' or 'client'
 
-            // Create Date (Note: Month is 0-indexed in JS, so we do month - 1)
+        function toggleView() {
+            const btn = document.getElementById('view-toggle-btn');
+            const attSection = document.getElementById('attendance-section');
+            const cliSection = document.getElementById('client-section');
+            const addEmpBtn = document.getElementById('add-emp-btn');
+
+            if (currentView === 'attendance') {
+                // Switch to Client View
+                currentView = 'client';
+                attSection.classList.add('hidden');
+                cliSection.classList.remove('hidden');
+                addEmpBtn.classList.add('hidden'); // Hide Emp button in Client view
+
+                // Update Button Style
+                btn.innerText = "Attendance Report";
+                btn.className = "bg-purple-600 text-white px-6 py-2 rounded shadow hover:bg-purple-700 transition font-bold tracking-wide";
+                
+                loadClientData();
+            } else {
+                // Switch to Attendance View
+                currentView = 'attendance';
+                cliSection.classList.add('hidden');
+                attSection.classList.remove('hidden');
+                addEmpBtn.classList.remove('hidden');
+
+                // Update Button Style
+                btn.innerText = "Client Report";
+                btn.className = "bg-yellow-500 text-white px-6 py-2 rounded shadow hover:bg-yellow-600 transition font-bold tracking-wide";
+                
+                loadAttendanceData();
+            }
+        }
+
+        // ================= CLIENT LOGIC =================
+        async function loadClientData() {
+            try {
+                const res = await fetch('/api/clients');
+                const clients = await res.json();
+                const tbody = document.getElementById('client-table-body');
+                tbody.innerHTML = '';
+
+                clients.forEach(c => {
+                    // Calculate days
+                    const start = parseCustomDate(c.start_date, "00:00");
+                    const end = parseCustomDate(c.end_date, "00:00");
+                    const diffTime = Math.abs(end - start);
+                    const diffDays = Math.ceil(Math.abs(end - start) / (1000 * 60 * 60 * 24));
+
+                    const tr = document.createElement('tr');
+                    tr.className = "hover:bg-blue-50 transition";
+                    tr.innerHTML = `
+                        <td class="py-3 px-4 font-semibold text-gray-800">${c.name}</td>
+                        <td class="py-3 px-4 text-gray-600">${c.start_date}</td>
+                        <td class="py-3 px-4 text-gray-600">${c.end_date}</td>
+                        <td class="py-3 px-4 font-mono font-bold text-green-600">₹${c.cost}</td>
+                        <td class="py-3 px-4 text-gray-500">${diffDays} Days</td>
+                    `;
+                    tbody.appendChild(tr);
+                });
+            } catch (e) {
+                console.error("Error loading clients:", e);
+            }
+        }
+
+        async function addClient() {
+            const name = document.getElementById('client-name').value;
+            const start = document.getElementById('client-start').value;
+            const end = document.getElementById('client-end').value;
+            const cost = document.getElementById('client-cost').value;
+
+            if(!name || !start || !end || !cost) {
+                alert("Please fill all fields");
+                return;
+            }
+
+            const res = await fetch('/api/clients/add', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ name, start_date: start, end_date: end, cost })
+            });
+
+            if(res.ok) {
+                // Clear fields
+                document.getElementById('client-name').value = '';
+                document.getElementById('client-cost').value = '';
+                loadClientData(); // Refresh table
+            } else {
+                alert("Failed to add client");
+            }
+        }
+
+        // ================= ATTENDANCE LOGIC (EXISTING) =================
+        function parseCustomDate(dateStr, timeStr) {
+            const [day, month, year] = dateStr.split('-').map(Number);
+            const [hours, minutes] = timeStr.split(':').map(Number);
             return new Date(year, month - 1, day, hours, minutes);
         }
 
-        // ---- Attendance Report Loader (read-only) ----
-        async function loadData() {
+        async function loadAttendanceData() {
             const res = await fetch('/api/report');
             const rawLogs = await res.json();
             
-            // 1. Group logs by "Name-Date"
             let dailyRecords = {};
             let monthlyHours = {}; 
 
-            // FIX: Use helper function for sorting
-            rawLogs.sort((a, b) => {
-                return parseCustomDate(a.date, a.time) - parseCustomDate(b.date, b.time);
-            });
+            rawLogs.sort((a, b) => parseCustomDate(a.date, a.time) - parseCustomDate(b.date, b.time));
 
             rawLogs.forEach(log => {
                 let key = `${log.name}-${log.date}`;
-                
                 if (!dailyRecords[key]) {
-                    dailyRecords[key] = {
-                        name: log.name,
-                        date: log.date,
-                        logins: [],
-                        logouts: [],
-                        totalSeconds: 0
-                    };
+                    dailyRecords[key] = { name: log.name, date: log.date, logins: [], logouts: [], totalSeconds: 0 };
                 }
-
                 if (log.type === 'LOGIN') dailyRecords[key].logins.push(log.time);
                 if (log.type === 'LOGOUT') dailyRecords[key].logouts.push(log.time);
             });
 
-            // 2. Calculate Hours
             Object.values(dailyRecords).forEach(day => {
                 let seconds = 0;
-                // Match the ith Login with the ith Logout
                 for (let i = 0; i < day.logins.length; i++) {
                     if (day.logouts[i]) {
-                        // FIX: Use helper function for Math
                         let start = parseCustomDate(day.date, day.logins[i]);
                         let end = parseCustomDate(day.date, day.logouts[i]);
-                        
                         seconds += (end - start) / 1000;
                     }
                 }
                 day.totalSeconds = seconds;
-
-                // Add to monthly total
-                // Extract month key from DD-MM-YYYY -> "Name-MM-YYYY"
-                let monthPart = day.date.substring(3); // Grab "12-2025" part
+                let monthPart = day.date.substring(3);
                 let monthKey = `${day.name}-${monthPart}`;
-                
                 if (!monthlyHours[monthKey]) monthlyHours[monthKey] = 0;
                 monthlyHours[monthKey] += seconds;
             });
 
-            // 3. Render Table
-            const tbody = document.getElementById('table-body');
+            const tbody = document.getElementById('att-table-body');
             tbody.innerHTML = '';
 
-            // Convert object back to array and sort by date desc
-            let sortedDays = Object.values(dailyRecords).sort((a, b) => {
-                 // Sort using helper so latest date is top
-                 return parseCustomDate(b.date, "00:00") - parseCustomDate(a.date, "00:00");
-            });
+            let sortedDays = Object.values(dailyRecords).sort((a, b) => 
+                parseCustomDate(b.date, "00:00") - parseCustomDate(a.date, "00:00")
+            );
 
             sortedDays.forEach(day => {
-                let monthPart = day.date.substring(3);
-                let monthKey = `${day.name}-${monthPart}`;
-                
+                let monthKey = `${day.name}-${day.date.substring(3)}`;
                 let monthTotal = (monthlyHours[monthKey] / 3600).toFixed(2);
                 let dayTotal = (day.totalSeconds / 3600).toFixed(2);
-
-                const tr = document.createElement('tr');
-                tr.className = "hover:bg-gray-50 transition";
-                
                 let firstIn = day.logins.length > 0 ? day.logins[0] : '-';
                 let lastOut = day.logouts.length > 0 ? day.logouts[day.logouts.length - 1] : '-';
 
+                const tr = document.createElement('tr');
+                tr.className = "hover:bg-gray-50 transition";
                 tr.innerHTML = `
                     <td class="py-3 px-4 text-gray-700">${day.date}</td>
                     <td class="py-3 px-4 font-semibold text-gray-900">${day.name}</td>
@@ -175,80 +296,76 @@
             });
         }
 
-        // ---- Admin Registration Logic ----
+        // ================= EMPLOYEE REGISTRATION LOGIC =================
         const regSection = document.getElementById('reg-section');
-        const toggleRegBtn = document.getElementById('toggle-reg');
         const regVideo = document.getElementById('reg-video');
         const regCanvas = document.getElementById('reg-canvas');
         const regStatus = document.getElementById('reg-status');
+        let streamRef = null;
 
-        async function startAdminCamera() {
-            try {
-                const stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: 'user' } });
-                regVideo.srcObject = stream;
-            } catch (err) {
-                regStatus.innerText = "Camera access denied";
-                regStatus.className = "text-sm font-semibold h-5 text-red-600";
+        function toggleEmployeeForm() {
+            if (regSection.classList.contains('hidden')) {
+                regSection.classList.remove('hidden');
+                startCamera();
+            } else {
+                regSection.classList.add('hidden');
+                stopCamera();
             }
         }
 
-        toggleRegBtn.addEventListener('click', () => {
-            if (regSection.classList.contains('hidden')) {
-                regSection.classList.remove('hidden');
-                startAdminCamera();
-            } else {
-                regSection.classList.add('hidden');
-                regStatus.innerText = "";
+        async function startCamera() {
+            try {
+                streamRef = await navigator.mediaDevices.getUserMedia({ video: { facingMode: 'user' } });
+                regVideo.srcObject = streamRef;
+            } catch (err) {
+                regStatus.innerText = "Camera Error";
             }
-        });
+        }
+
+        function stopCamera() {
+            if (streamRef) {
+                streamRef.getTracks().forEach(track => track.stop());
+                streamRef = null;
+            }
+        }
 
         async function registerEmployee() {
-            const nameInput = document.getElementById('reg-name');
-            const name = nameInput.value.trim();
-
-            if (!name) {
-                regStatus.innerText = "Please enter employee name";
-                regStatus.className = "text-sm font-semibold h-5 text-red-600";
-                return;
-            }
-
-            regStatus.innerText = "Capturing face...";
-            regStatus.className = "text-sm font-semibold h-5 text-yellow-600";
+            const name = document.getElementById('reg-name').value.trim();
+            const email = document.getElementById('reg-email').value.trim();
+            if (!name || !email) return alert("Please enter Name and Email");
 
             regCanvas.width = regVideo.videoWidth;
             regCanvas.height = regVideo.videoHeight;
             regCanvas.getContext('2d').drawImage(regVideo, 0, 0);
             const image = regCanvas.toDataURL('image/jpeg', 0.8);
 
+            regStatus.innerText = "Saving...";
+            
             try {
                 const res = await fetch('/register', {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ name, image })
+                    body: JSON.stringify({ 
+                        name, 
+                        email,
+                        image
+                    })
                 });
                 const data = await res.json();
-
                 if (data.status === 'success') {
-                    regStatus.innerText = data.message || "Employee registered successfully";
-                    regStatus.className = "text-sm font-semibold h-5 text-green-600";
-                    nameInput.value = "";
-
-                    setTimeout(() => {
-                        regSection.classList.add('hidden');
-                        regStatus.innerText = "";
-                    }, 2000);
+                    regStatus.innerText = "Success!";
+                    setTimeout(() => toggleEmployeeForm(), 1000);
                 } else {
-                    regStatus.innerText = data.message || "Registration failed";
-                    regStatus.className = "text-sm font-semibold h-5 text-red-600";
+                    regStatus.innerText = "Error: " + data.message;
                 }
             } catch (e) {
-                regStatus.innerText = "Server error during registration";
-                regStatus.className = "text-sm font-semibold h-5 text-red-600";
+                regStatus.innerText = "Server Error";
             }
         }
 
-        loadData();
-        setInterval(loadData, 10000);
+        // Initialize Default View
+        loadAttendanceData();
+        setInterval(loadAttendanceData, 10000); // Auto refresh attendance only
     </script>
 </body>
 </html>
