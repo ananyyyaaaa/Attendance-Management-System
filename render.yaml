@@ -1,0 +1,10 @@
+services:
+  - type: web
+    name: attendance-system
+    env: docker
+    plan: free
+    dockerfilePath: ./Dockerfile
+    region: oregon
+    envVars:
+      - key: PORT
+        value: 10000
