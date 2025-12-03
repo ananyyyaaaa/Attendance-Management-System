@@ -5,11 +5,10 @@ services:
     plan: free
     dockerfilePath: ./Dockerfile
     region: oregon
+    buildCommand: docker build -t attendance-system .
     envVars:
       - key: PORT
         value: 10000
-
-apt_packages:
-  - libgl1-mesa-glx
-  - libglib2.0-0
+      - key: PYTHONUNBUFFERED
+        value: 1
 
