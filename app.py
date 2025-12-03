@@ -138,17 +138,23 @@ def preload_deepface_model(model_name=DEEPFACE_MODEL):
     if _deepface_model_instance is None:
         from deepface import DeepFace
         print(f"Loading DeepFace model '{model_name}'...")
+        # For current DeepFace version we don't pass the built model
+        # into represent(), but we keep this call to warm up weights.
         _deepface_model_instance = DeepFace.build_model(model_name)
-        print("✅ DeepFace model loaded")
+        print("✅ DeepFace model preloaded")
     return _deepface_model_instance
 
 def compute_embedding(img_array, model_name=DEEPFACE_MODEL, enforce_detection=True):
+    """
+    Compute a face embedding using DeepFace.represent.
+    Uses numpy array input and avoids passing unsupported args like `model`.
+    """
     from deepface import DeepFace
-    model = preload_deepface_model(model_name)
+    # Optionally warm up model once at startup
+    preload_deepface_model(model_name)
     rep = DeepFace.represent(
         img_path=img_array,
         model_name=model_name,
-        model=model,
         enforce_detection=enforce_detection,
         detector_backend='opencv'
     )
@@ -210,6 +216,51 @@ def cosine_similarity(a, b):
         return 0.0
     return np.dot(a, b) / (np.linalg.norm(a) * np.linalg.norm(b))
 
+
+# ---------------- Attendance helpers ----------------
+def get_last_log_type(name, conn=None):
+    """
+    Return the last log type (LOGIN / LOGOUT) for *today* for a given employee.
+    This keeps the original behaviour: first scan of the day = LOGIN,
+    second scan of the day = LOGOUT, and from the next day it resets.
+    """
+    should_close = False
+    if conn is None:
+        conn = get_db_connection()
+        should_close = True
+
+    if conn is None:
+        return None
+
+    c = conn.cursor()
+    try:
+        if DB_URL:
+            today = datetime.date.today()
+            c.execute(
+                "SELECT type FROM logs WHERE name = %s AND DATE(timestamp) = %s "
+                "ORDER BY id DESC LIMIT 1",
+                (name, today),
+            )
+        else:
+            c.execute(
+                "SELECT type FROM logs WHERE name = ? AND DATE(timestamp) = DATE('now') "
+                "ORDER BY id DESC LIMIT 1",
+                (name,),
+            )
+        row = c.fetchone()
+    finally:
+        if should_close:
+            if DB_URL:
+                return_db_connection(conn)
+            else:
+                conn.close()
+
+    if not row:
+        return None
+
+    # For sqlite we use row_factory=Row so we can index by column name
+    return row[0] if DB_URL else row["type"]
+
 # ---------------- Routes ----------------
 @app.route('/')
 def home():
@@ -218,6 +269,102 @@ def home():
 @app.route('/admin')
 def admin():
     return render_template('admin.html')
+
+
+@app.route('/api/clients', methods=['GET'])
+def get_clients():
+    """Return all client packages for the admin client table."""
+    conn = get_db_connection()
+    if conn is None:
+        return jsonify([])  # fail-soft
+    c = conn.cursor()
+    c.execute("SELECT * FROM clients ORDER BY id DESC")
+    rows = c.fetchall()
+    if DB_URL:
+        return_db_connection(conn)
+    else:
+        conn.close()
+
+    clients = []
+    for row in rows:
+        if DB_URL:
+            cid = row[0]
+            name = row[1]
+            start_date = row[2]
+            end_date = row[3]
+            cost = row[4]
+        else:
+            cid = row["id"]
+            name = row["name"]
+            start_date = row["start_date"]
+            end_date = row["end_date"]
+            cost = row["cost"]
+
+        # Keep dates formatted as DD-MM-YYYY to match existing frontend logic
+        try:
+            if start_date:
+                start_date = datetime.datetime.strptime(
+                    start_date, "%Y-%m-%d"
+                ).strftime("%d-%m-%Y")
+            if end_date:
+                end_date = datetime.datetime.strptime(
+                    end_date, "%Y-%m-%d"
+                ).strftime("%d-%m-%Y")
+        except Exception:
+            # If already in desired format, just keep as-is
+            pass
+
+        clients.append(
+            {
+                "id": cid,
+                "name": name,
+                "start_date": start_date,
+                "end_date": end_date,
+                "cost": cost,
+            }
+        )
+
+    return jsonify(clients)
+
+
+@app.route('/api/clients/add', methods=['POST'])
+def add_client():
+    """Add a new client package from the admin panel."""
+    try:
+        data = request.json or {}
+        name = data.get("name")
+        start_date = data.get("start_date")
+        end_date = data.get("end_date")
+        cost = data.get("cost")
+
+        if not name or not start_date or not end_date or not cost:
+            return jsonify({"status": "error", "message": "Missing fields"}), 400
+
+        conn = get_db_connection()
+        if conn is None:
+            return jsonify({"status": "error", "message": "DB unavailable"}), 500
+        c = conn.cursor()
+
+        if DB_URL:
+            c.execute(
+                "INSERT INTO clients (name, start_date, end_date, cost) VALUES (%s, %s, %s, %s)",
+                (name, start_date, end_date, cost),
+            )
+        else:
+            c.execute(
+                "INSERT INTO clients (name, start_date, end_date, cost) VALUES (?, ?, ?, ?)",
+                (name, start_date, end_date, cost),
+            )
+        conn.commit()
+        if DB_URL:
+            return_db_connection(conn)
+        else:
+            conn.close()
+
+        return jsonify({"status": "success", "message": "Client Added"})
+    except Exception as e:
+        print(f"ADD CLIENT ERROR: {e}")
+        return jsonify({"status": "error", "message": str(e)}), 500
 
 @app.route('/register', methods=['POST'])
 def register():
@@ -238,10 +385,14 @@ def register():
         if DB_URL:
             c.execute("INSERT INTO employees (name, email, encoding) VALUES (%s, %s, %s)",
                       (name, email, psycopg2.Binary(embedding_bytes)))
-            return_db_connection(conn)
         else:
             c.execute("INSERT INTO employees (name, email, encoding) VALUES (?, ?, ?)",
                       (name, email, sqlite3.Binary(embedding_bytes)))
+        # Ensure data is actually written to the DB
+        conn.commit()
+        if DB_URL:
+            return_db_connection(conn)
+        else:
             conn.close()
         invalidate_face_cache()
         return jsonify({"status": "success", "message": f"Registered {name}!"})
@@ -279,25 +430,97 @@ def scan():
             return jsonify({"status": "error", "message": "Face not recognized"}), 401
         name = known_names[best_idx]
         now = datetime.datetime.now()
+
         conn = get_db_connection()
+        if conn is None:
+            return jsonify({"status": "error", "message": "Database connection failed"}), 500
         c = conn.cursor()
-        c.execute("SELECT type FROM logs WHERE name=? ORDER BY id DESC LIMIT 1" if not DB_URL else
-                  "SELECT type FROM logs WHERE name=%s ORDER BY id DESC LIMIT 1", (name,))
-        row = c.fetchone()
-        last_type = row[0] if row else None
-        new_type = 'LOGOUT' if last_type == 'LOGIN' else 'LOGIN'
-        message = f"Goodbye, {name}!" if new_type == 'LOGOUT' else f"Welcome, {name}!"
+
+        # Determine today's last log to keep the original behaviour:
+        # first scan of the day = LOGIN, second = LOGOUT, later scans show "already marked".
+        last_type = get_last_log_type(name, conn)
+        if last_type == "LOGIN":
+            new_type = "LOGOUT"
+            message = f"Goodbye, {name}!"
+        elif last_type == "LOGOUT":
+            # Already logged in and out today – don't create more rows
+            if DB_URL:
+                return_db_connection(conn)
+            else:
+                conn.close()
+            return jsonify(
+                {
+                    "status": "error",
+                    "message": "Today's attendance is already marked for this employee",
+                }
+            ), 400
+        else:
+            new_type = "LOGIN"
+            message = f"Welcome, {name}!"
+
         if DB_URL:
-            c.execute("INSERT INTO logs (name, timestamp, type) VALUES (%s, %s, %s)", (name, now, new_type))
+            c.execute(
+                "INSERT INTO logs (name, timestamp, type) VALUES (%s, %s, %s)",
+                (name, now, new_type),
+            )
+            conn.commit()
             return_db_connection(conn)
         else:
-            c.execute("INSERT INTO logs (name, timestamp, type) VALUES (?, ?, ?)", (name, now, new_type))
+            c.execute(
+                "INSERT INTO logs (name, timestamp, type) VALUES (?, ?, ?)",
+                (name, now, new_type),
+            )
             conn.commit()
             conn.close()
+
         return jsonify({"status": "success", "name": name, "type": new_type, "message": message, "similarity": float(best_sim)})
     except Exception as e:
         print(f"SCAN ERROR: {e}")
         return jsonify({"status": "error", "message": "Face recognition temporarily unavailable"}), 500
+
+
+@app.route('/api/report', methods=['GET'])
+def report():
+    """
+    Return raw log entries for the admin attendance table.
+    Each row: { name, date (DD-MM-YYYY), time (HH:MM), type }.
+    """
+    conn = get_db_connection()
+    if conn is None:
+        return jsonify([])
+    c = conn.cursor()
+    c.execute("SELECT name, timestamp, type FROM logs ORDER BY timestamp DESC")
+    rows = c.fetchall()
+    if DB_URL:
+        return_db_connection(conn)
+    else:
+        conn.close()
+
+    data = []
+    for row in rows:
+        n = row[0] if DB_URL else row["name"]
+        t = row[1] if DB_URL else row["timestamp"]
+        s = row[2] if DB_URL else row["type"]
+
+        if isinstance(t, str):
+            try:
+                # strip microseconds if present
+                t_obj = datetime.datetime.strptime(t.split(".")[0], "%Y-%m-%d %H:%M:%S")
+            except Exception:
+                continue
+        else:
+            t_obj = t
+
+        data.append(
+            {
+                "name": n,
+                "date": t_obj.strftime("%d-%m-%Y"),
+                "time": t_obj.strftime("%H:%M"),
+                "type": s,
+            }
+        )
+
+    return jsonify(data)
 
 # ---------------- Scheduler ----------------
 scheduler = None
