@@ -7,280 +7,256 @@
     <script src="https://cdn.tailwindcss.com"></script>
     <style>
         .font-mono { font-family: 'Courier New', Courier, monospace; }
-        /* Smooth fade for toggling sections */
         .fade-in { animation: fadeIn 0.3s ease-in-out; }
         @keyframes fadeIn { from { opacity: 0; } to { opacity: 1; } }
     </style>
 </head>
 <body class="bg-gray-100 p-8">
+<div class="max-w-7xl mx-auto space-y-8">
 
-    <div class="max-w-7xl mx-auto space-y-8">
-
-        <div class="bg-white rounded-lg shadow-md p-6 flex flex-col md:flex-row items-center justify-between gap-4">
-            <h1 class="text-2xl font-bold text-gray-800">Admin Panel</h1>
-            
-            <div class="flex gap-3">
-                <button id="view-toggle-btn" onclick="toggleView()"
-                        class="bg-yellow-500 text-white px-6 py-2 rounded shadow hover:bg-yellow-600 transition font-bold tracking-wide">
-                    Client Report
-                </button>
-
-                <button id="add-emp-btn" onclick="toggleEmployeeForm()"
-                        class="bg-green-600 text-white px-4 py-2 rounded hover:bg-green-700 transition font-semibold">
-                    + New Employee
-                </button>
-            </div>
+    <div class="bg-white rounded-lg shadow-md p-6 flex flex-col md:flex-row items-center justify-between gap-4">
+        <h1 class="text-2xl font-bold text-gray-800">Admin Panel</h1>
+        <div class="flex gap-3">
+            <button id="view-toggle-btn" onclick="toggleView()"
+                    class="bg-yellow-500 text-white px-6 py-2 rounded shadow hover:bg-yellow-600 transition font-bold tracking-wide">
+                Client Report
+            </button>
+            <button id="add-emp-btn" onclick="toggleEmployeeForm()"
+                    class="bg-green-600 text-white px-4 py-2 rounded hover:bg-green-700 transition font-semibold">
+                + New Employee
+            </button>
         </div>
-
-        <div id="attendance-section" class="fade-in space-y-8">
-            
-            <div id="reg-section" class="bg-white rounded-lg shadow-md p-6 hidden">
-                <div class="grid gap-6 md:grid-cols-2 items-start">
-                    <div class="space-y-4">
-                        <div class="relative w-full aspect-video bg-black rounded-lg overflow-hidden">
-                            <video id="reg-video" class="w-full h-full object-cover" autoplay playsinline></video>
-                            <canvas id="reg-canvas" class="hidden"></canvas>
-                        </div>
-                    </div>
-                    <div class="space-y-3">
-                        <h3 class="font-bold text-lg text-gray-700">Register New Face</h3>
-                        <input type="text" id="reg-name" placeholder="Employee Name"
-                               class="w-full px-4 py-2 border rounded-lg focus:outline-none focus:ring-2 focus:ring-green-500">
-                        <input type="email" id="reg-email" placeholder="Employee Email" 
-                                class="w-full px-4 py-2 border rounded-lg">
-                        <button onclick="registerEmployee()" class="w-full bg-green-600 text-white px-4 py-2 rounded hover:bg-green-700 transition font-semibold">
-                            Capture & Save
-                        </button>
-                        <p id="reg-status" class="text-sm font-semibold h-5 text-gray-600"></p>
-                    </div>
-                </div>
-            </div>
-
-            <div class="bg-white rounded-lg shadow-md p-6">
-                <div class="flex justify-between items-center mb-6">
-                    <h2 class="text-2xl font-bold text-gray-800">Attendance Report</h2>
-                    <button onclick="loadAttendanceData()" class="text-blue-600 hover:underline">Refresh</button>
-                </div>
-                <div class="overflow-x-auto">
-                    <table class="min-w-full bg-white border border-gray-200 shadow-sm rounded-lg">
-                        <thead class="bg-gray-50 border-b border-gray-200">
-                            <tr>
-                                <th class="py-3 px-4 text-left text-xs font-bold text-gray-500 uppercase">Date</th>
-                                <th class="py-3 px-4 text-left text-xs font-bold text-gray-500 uppercase">Name</th>
-                                <th class="py-3 px-4 text-left text-xs font-bold text-gray-500 uppercase">Log In</th>
-                                <th class="py-3 px-4 text-left text-xs font-bold text-gray-500 uppercase">Log Out</th>
-                                <th class="py-3 px-4 text-left text-xs font-bold text-gray-500 uppercase">Daily Hrs</th>
-                                <th class="py-3 px-4 text-left text-xs font-bold text-gray-500 uppercase">Monthly Hrs</th>
-                            </tr>
-                        </thead>
-                        <tbody id="att-table-body" class="divide-y divide-gray-200 text-sm"></tbody>
-                    </table>
-                </div>
-            </div>
-        </div>
-
-        <div id="client-section" class="fade-in space-y-8 hidden">
-            
-            <div class="bg-white rounded-lg shadow-md p-6">
-                <h3 class="font-bold text-lg text-gray-700 mb-4">Add New Client</h3>
-                <div class="grid grid-cols-1 md:grid-cols-5 gap-4 items-end">
-                    <div class="md:col-span-1">
-                        <label class="text-xs font-bold text-gray-500 uppercase">Client Name</label>
-                        <input type="text" id="client-name" class="w-full border p-2 rounded mt-1" placeholder="Company ABC">
-                    </div>
-                    <div class="md:col-span-1">
-                        <label class="text-xs font-bold text-gray-500 uppercase">Start Date</label>
-                        <input type="date" id="client-start" class="w-full border p-2 rounded mt-1">
-                    </div>
-                    <div class="md:col-span-1">
-                        <label class="text-xs font-bold text-gray-500 uppercase">End Date</label>
-                        <input type="date" id="client-end" class="w-full border p-2 rounded mt-1">
-                    </div>
-                    <div class="md:col-span-1">
-                        <label class="text-xs font-bold text-gray-500 uppercase">Cost (₹)</label>
-                        <input type="number" id="client-cost" class="w-full border p-2 rounded mt-1" placeholder="50000">
-                    </div>
-                    <div class="md:col-span-1">
-                        <button onclick="addClient()" class="w-full bg-blue-600 text-white p-2 rounded hover:bg-blue-700 transition font-bold">
-                            + Add Client
-                        </button>
-                    </div>
-                </div>
-            </div>
-
-            <div class="bg-white rounded-lg shadow-md p-6">
-                <div class="flex justify-between items-center mb-6">
-                    <h2 class="text-2xl font-bold text-gray-800">Client Packages</h2>
-                    <button onclick="loadClientData()" class="text-blue-600 hover:underline">Refresh</button>
-                </div>
-                <div class="overflow-x-auto">
-                    <table class="min-w-full bg-white border border-gray-200 shadow-sm rounded-lg">
-                        <thead class="bg-blue-50 border-b border-blue-100">
-                            <tr>
-                                <th class="py-3 px-4 text-left text-xs font-bold text-blue-800 uppercase">Client Name</th>
-                                <th class="py-3 px-4 text-left text-xs font-bold text-blue-800 uppercase">Start Date</th>
-                                <th class="py-3 px-4 text-left text-xs font-bold text-blue-800 uppercase">End Date</th>
-                                <th class="py-3 px-4 text-left text-xs font-bold text-blue-800 uppercase">Cost</th>
-                                <th class="py-3 px-4 text-left text-xs font-bold text-blue-800 uppercase">Duration</th>
-                            </tr>
-                        </thead>
-                        <tbody id="client-table-body" class="divide-y divide-gray-200 text-sm"></tbody>
-                    </table>
-                </div>
-            </div>
-        </div>
-
     </div>
 
-    <script>
-        // ================= STATE MANAGEMENT =================
-        let currentView = 'attendance'; // 'attendance' or 'client'
+    <!-- Attendance Section -->
+    <div id="attendance-section" class="fade-in space-y-8">
 
-        function toggleView() {
-            const btn = document.getElementById('view-toggle-btn');
-            const attSection = document.getElementById('attendance-section');
-            const cliSection = document.getElementById('client-section');
-            const addEmpBtn = document.getElementById('add-emp-btn');
+        <!-- Employee Registration -->
+        <div id="reg-section" class="bg-white rounded-lg shadow-md p-6 hidden">
+            <div class="grid gap-6 md:grid-cols-2 items-start">
+                <div class="relative w-full aspect-video bg-black rounded-lg overflow-hidden">
+                    <video id="reg-video" class="w-full h-full object-cover" autoplay playsinline></video>
+                    <canvas id="reg-canvas" class="hidden"></canvas>
+                </div>
+                <div class="space-y-3">
+                    <h3 class="font-bold text-lg text-gray-700">Register New Face</h3>
+                    <input type="text" id="reg-name" placeholder="Employee Name"
+                           class="w-full px-4 py-2 border rounded-lg focus:outline-none focus:ring-2 focus:ring-green-500">
+                    <input type="email" id="reg-email" placeholder="Employee Email"
+                           class="w-full px-4 py-2 border rounded-lg">
+                    <button onclick="registerEmployee()"
+                            class="w-full bg-green-600 text-white px-4 py-2 rounded hover:bg-green-700 transition font-semibold">
+                        Capture & Save
+                    </button>
+                    <p id="reg-status" class="text-sm font-semibold h-5 text-gray-600"></p>
+                </div>
+            </div>
+        </div>
 
-            if (currentView === 'attendance') {
-                // Switch to Client View
-                currentView = 'client';
-                attSection.classList.add('hidden');
-                cliSection.classList.remove('hidden');
-                addEmpBtn.classList.add('hidden'); // Hide Emp button in Client view
+        <!-- Attendance Report -->
+        <div class="bg-white rounded-lg shadow-md p-6">
+            <div class="flex justify-between items-center mb-6">
+                <h2 class="text-2xl font-bold text-gray-800">Attendance Report</h2>
+                <button onclick="loadAttendanceData()" class="text-blue-600 hover:underline">Refresh</button>
+            </div>
+            <div class="overflow-x-auto">
+                <table class="min-w-full bg-white border border-gray-200 shadow-sm rounded-lg">
+                    <thead class="bg-gray-50 border-b border-gray-200">
+                    <tr>
+                        <th class="py-3 px-4 text-left text-xs font-bold text-gray-500 uppercase">Date</th>
+                        <th class="py-3 px-4 text-left text-xs font-bold text-gray-500 uppercase">Name</th>
+                        <th class="py-3 px-4 text-left text-xs font-bold text-gray-500 uppercase">Log In</th>
+                        <th class="py-3 px-4 text-left text-xs font-bold text-gray-500 uppercase">Log Out</th>
+                        <th class="py-3 px-4 text-left text-xs font-bold text-gray-500 uppercase">Daily Hrs</th>
+                        <th class="py-3 px-4 text-left text-xs font-bold text-gray-500 uppercase">Monthly Hrs</th>
+                    </tr>
+                    </thead>
+                    <tbody id="att-table-body" class="divide-y divide-gray-200 text-sm"></tbody>
+                </table>
+            </div>
+        </div>
+    </div>
 
-                // Update Button Style
-                btn.innerText = "Attendance Report";
-                btn.className = "bg-purple-600 text-white px-6 py-2 rounded shadow hover:bg-purple-700 transition font-bold tracking-wide";
-                
-                loadClientData();
-            } else {
-                // Switch to Attendance View
-                currentView = 'attendance';
-                cliSection.classList.add('hidden');
-                attSection.classList.remove('hidden');
-                addEmpBtn.classList.remove('hidden');
+    <!-- Client Section -->
+    <div id="client-section" class="fade-in space-y-8 hidden">
 
-                // Update Button Style
-                btn.innerText = "Client Report";
-                btn.className = "bg-yellow-500 text-white px-6 py-2 rounded shadow hover:bg-yellow-600 transition font-bold tracking-wide";
-                
-                loadAttendanceData();
-            }
+        <div class="bg-white rounded-lg shadow-md p-6">
+            <h3 class="font-bold text-lg text-gray-700 mb-4">Add New Client</h3>
+            <div class="grid grid-cols-1 md:grid-cols-5 gap-4 items-end">
+                <div class="md:col-span-1">
+                    <label class="text-xs font-bold text-gray-500 uppercase">Client Name</label>
+                    <input type="text" id="client-name" class="w-full border p-2 rounded mt-1" placeholder="Company ABC">
+                </div>
+                <div class="md:col-span-1">
+                    <label class="text-xs font-bold text-gray-500 uppercase">Start Date</label>
+                    <input type="date" id="client-start" class="w-full border p-2 rounded mt-1">
+                </div>
+                <div class="md:col-span-1">
+                    <label class="text-xs font-bold text-gray-500 uppercase">End Date</label>
+                    <input type="date" id="client-end" class="w-full border p-2 rounded mt-1">
+                </div>
+                <div class="md:col-span-1">
+                    <label class="text-xs font-bold text-gray-500 uppercase">Cost (₹)</label>
+                    <input type="number" id="client-cost" class="w-full border p-2 rounded mt-1" placeholder="50000">
+                </div>
+                <div class="md:col-span-1">
+                    <button onclick="addClient()"
+                            class="w-full bg-blue-600 text-white p-2 rounded hover:bg-blue-700 transition font-bold">
+                        + Add Client
+                    </button>
+                </div>
+            </div>
+        </div>
+
+        <div class="bg-white rounded-lg shadow-md p-6">
+            <div class="flex justify-between items-center mb-6">
+                <h2 class="text-2xl font-bold text-gray-800">Client Packages</h2>
+                <button onclick="loadClientData()" class="text-blue-600 hover:underline">Refresh</button>
+            </div>
+            <div class="overflow-x-auto">
+                <table class="min-w-full bg-white border border-gray-200 shadow-sm rounded-lg">
+                    <thead class="bg-blue-50 border-b border-blue-100">
+                    <tr>
+                        <th class="py-3 px-4 text-left text-xs font-bold text-blue-800 uppercase">Client Name</th>
+                        <th class="py-3 px-4 text-left text-xs font-bold text-blue-800 uppercase">Start Date</th>
+                        <th class="py-3 px-4 text-left text-xs font-bold text-blue-800 uppercase">End Date</th>
+                        <th class="py-3 px-4 text-left text-xs font-bold text-blue-800 uppercase">Cost</th>
+                        <th class="py-3 px-4 text-left text-xs font-bold text-blue-800 uppercase">Duration</th>
+                    </tr>
+                    </thead>
+                    <tbody id="client-table-body" class="divide-y divide-gray-200 text-sm"></tbody>
+                </table>
+            </div>
+        </div>
+    </div>
+</div>
+
+<script>
+    let currentView = 'attendance';
+    const regSection = document.getElementById('reg-section');
+    const regVideo = document.getElementById('reg-video');
+    const regCanvas = document.getElementById('reg-canvas');
+    const regStatus = document.getElementById('reg-status');
+    let streamRef = null;
+
+    function toggleView() {
+        const btn = document.getElementById('view-toggle-btn');
+        const attSection = document.getElementById('attendance-section');
+        const cliSection = document.getElementById('client-section');
+        const addEmpBtn = document.getElementById('add-emp-btn');
+
+        if (currentView === 'attendance') {
+            currentView = 'client';
+            attSection.classList.add('hidden');
+            cliSection.classList.remove('hidden');
+            addEmpBtn.classList.add('hidden');
+            btn.innerText = "Attendance Report";
+            btn.className = "bg-purple-600 text-white px-6 py-2 rounded shadow hover:bg-purple-700 transition font-bold tracking-wide";
+            loadClientData();
+        } else {
+            currentView = 'attendance';
+            cliSection.classList.add('hidden');
+            attSection.classList.remove('hidden');
+            addEmpBtn.classList.remove('hidden');
+            btn.innerText = "Client Report";
+            btn.className = "bg-yellow-500 text-white px-6 py-2 rounded shadow hover:bg-yellow-600 transition font-bold tracking-wide";
+            loadAttendanceData();
         }
+    }
 
-        // ================= CLIENT LOGIC =================
-        async function loadClientData() {
-            try {
-                const res = await fetch('/api/clients');
-                const clients = await res.json();
-                const tbody = document.getElementById('client-table-body');
-                tbody.innerHTML = '';
-
-                clients.forEach(c => {
-                    // Calculate days
-                    const start = parseCustomDate(c.start_date, "00:00");
-                    const end = parseCustomDate(c.end_date, "00:00");
-                    const diffTime = Math.abs(end - start);
-                    const diffDays = Math.ceil(Math.abs(end - start) / (1000 * 60 * 60 * 24));
-
-                    const tr = document.createElement('tr');
-                    tr.className = "hover:bg-blue-50 transition";
-                    tr.innerHTML = `
-                        <td class="py-3 px-4 font-semibold text-gray-800">${c.name}</td>
-                        <td class="py-3 px-4 text-gray-600">${c.start_date}</td>
-                        <td class="py-3 px-4 text-gray-600">${c.end_date}</td>
-                        <td class="py-3 px-4 font-mono font-bold text-green-600">₹${c.cost}</td>
-                        <td class="py-3 px-4 text-gray-500">${diffDays} Days</td>
-                    `;
-                    tbody.appendChild(tr);
-                });
-            } catch (e) {
-                console.error("Error loading clients:", e);
-            }
-        }
-
-        async function addClient() {
-            const name = document.getElementById('client-name').value;
-            const start = document.getElementById('client-start').value;
-            const end = document.getElementById('client-end').value;
-            const cost = document.getElementById('client-cost').value;
-
-            if(!name || !start || !end || !cost) {
-                alert("Please fill all fields");
-                return;
-            }
-
-            const res = await fetch('/api/clients/add', {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ name, start_date: start, end_date: end, cost })
-            });
-
-            if(res.ok) {
-                // Clear fields
-                document.getElementById('client-name').value = '';
-                document.getElementById('client-cost').value = '';
-                loadClientData(); // Refresh table
-            } else {
-                alert("Failed to add client");
-            }
-        }
-
-        // ================= ATTENDANCE LOGIC (EXISTING) =================
-        function parseCustomDate(dateStr, timeStr) {
-            const [day, month, year] = dateStr.split('-').map(Number);
-            const [hours, minutes] = timeStr.split(':').map(Number);
-            return new Date(year, month - 1, day, hours, minutes);
-        }
-
-        async function loadAttendanceData() {
-            const res = await fetch('/api/report');
-            const rawLogs = await res.json();
-            
-            let dailyRecords = {};
-            let monthlyHours = {}; 
-
-            rawLogs.sort((a, b) => parseCustomDate(a.date, a.time) - parseCustomDate(b.date, b.time));
-
-            rawLogs.forEach(log => {
-                let key = `${log.name}-${log.date}`;
-                if (!dailyRecords[key]) {
-                    dailyRecords[key] = { name: log.name, date: log.date, logins: [], logouts: [], totalSeconds: 0 };
-                }
-                if (log.type === 'LOGIN') dailyRecords[key].logins.push(log.time);
-                if (log.type === 'LOGOUT') dailyRecords[key].logouts.push(log.time);
-            });
-
-            Object.values(dailyRecords).forEach(day => {
-                let seconds = 0;
-                for (let i = 0; i < day.logins.length; i++) {
-                    if (day.logouts[i]) {
-                        let start = parseCustomDate(day.date, day.logins[i]);
-                        let end = parseCustomDate(day.date, day.logouts[i]);
-                        seconds += (end - start) / 1000;
-                    }
-                }
-                day.totalSeconds = seconds;
-                let monthPart = day.date.substring(3);
-                let monthKey = `${day.name}-${monthPart}`;
-                if (!monthlyHours[monthKey]) monthlyHours[monthKey] = 0;
-                monthlyHours[monthKey] += seconds;
-            });
-
-            const tbody = document.getElementById('att-table-body');
+    // ================= CLIENT LOGIC =================
+    async function loadClientData() {
+        try {
+            const res = await fetch('/api/clients');
+            const clients = await res.json();
+            const tbody = document.getElementById('client-table-body');
             tbody.innerHTML = '';
+            clients.forEach(c => {
+                const start = parseCustomDate(c.start_date, "00:00");
+                const end = parseCustomDate(c.end_date, "00:00");
+                const diffDays = Math.ceil(Math.abs(end - start) / (1000 * 60 * 60 * 24));
+                const tr = document.createElement('tr');
+                tr.className = "hover:bg-blue-50 transition";
+                tr.innerHTML = `
+                    <td class="py-3 px-4 font-semibold text-gray-800">${c.name}</td>
+                    <td class="py-3 px-4 text-gray-600">${c.start_date}</td>
+                    <td class="py-3 px-4 text-gray-600">${c.end_date}</td>
+                    <td class="py-3 px-4 font-mono font-bold text-green-600">₹${c.cost}</td>
+                    <td class="py-3 px-4 text-gray-500">${diffDays} Days</td>`;
+                tbody.appendChild(tr);
+            });
+        } catch (e) { console.error("Error loading clients:", e); }
+    }
 
-            let sortedDays = Object.values(dailyRecords).sort((a, b) => 
-                parseCustomDate(b.date, "00:00") - parseCustomDate(a.date, "00:00")
-            );
+    async function addClient() {
+        const name = document.getElementById('client-name').value;
+        const start = document.getElementById('client-start').value;
+        const end = document.getElementById('client-end').value;
+        const cost = document.getElementById('client-cost').value;
 
-            sortedDays.forEach(day => {
+        if (!name || !start || !end || !cost) { alert("Please fill all fields"); return; }
+
+        const res = await fetch('/api/clients/add', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ name, start_date: start, end_date: end, cost })
+        });
+
+        if (res.ok) {
+            document.getElementById('client-name').value = '';
+            document.getElementById('client-cost').value = '';
+            loadClientData();
+        } else { alert("Failed to add client"); }
+    }
+
+    function parseCustomDate(dateStr, timeStr) {
+        const [day, month, year] = dateStr.split('-').map(Number);
+        const [hours, minutes] = timeStr.split(':').map(Number);
+        return new Date(year, month - 1, day, hours, minutes);
+    }
+
+    // ================= ATTENDANCE LOGIC =================
+    async function loadAttendanceData() {
+        const res = await fetch('/api/report');
+        const rawLogs = await res.json();
+
+        let dailyRecords = {};
+        let monthlyHours = {};
+
+        rawLogs.sort((a, b) => parseCustomDate(a.date, a.time) - parseCustomDate(b.date, b.time));
+
+        rawLogs.forEach(log => {
+            let key = `${log.name}-${log.date}`;
+            if (!dailyRecords[key]) dailyRecords[key] = { name: log.name, date: log.date, logins: [], logouts: [], totalSeconds: 0 };
+            if (log.type === 'LOGIN') dailyRecords[key].logins.push(log.time);
+            if (log.type === 'LOGOUT') dailyRecords[key].logouts.push(log.time);
+        });
+
+        Object.values(dailyRecords).forEach(day => {
+            let seconds = 0;
+            for (let i = 0; i < day.logins.length; i++) {
+                if (day.logouts[i]) {
+                    let start = parseCustomDate(day.date, day.logins[i]);
+                    let end = parseCustomDate(day.date, day.logouts[i]);
+                    seconds += (end - start) / 1000;
+                }
+            }
+            day.totalSeconds = seconds;
+            let monthKey = `${day.name}-${day.date.substring(3)}`;
+            if (!monthlyHours[monthKey]) monthlyHours[monthKey] = 0;
+            monthlyHours[monthKey] += seconds;
+        });
+
+        const tbody = document.getElementById('att-table-body');
+        tbody.innerHTML = '';
+
+        Object.values(dailyRecords).sort((a, b) => parseCustomDate(b.date, "00:00") - parseCustomDate(a.date, "00:00"))
+            .forEach(day => {
                 let monthKey = `${day.name}-${day.date.substring(3)}`;
-                let monthTotal = (monthlyHours[monthKey] / 3600).toFixed(2);
-                let dayTotal = (day.totalSeconds / 3600).toFixed(2);
-                let firstIn = day.logins.length > 0 ? day.logins[0] : '-';
-                let lastOut = day.logouts.length > 0 ? day.logouts[day.logouts.length - 1] : '-';
+                const monthTotal = (monthlyHours[monthKey] / 3600).toFixed(2);
+                const dayTotal = (day.totalSeconds / 3600).toFixed(2);
+                const firstIn = day.logins[0] || '-';
+                const lastOut = day.logouts[day.logouts.length - 1] || '-';
 
                 const tr = document.createElement('tr');
                 tr.className = "hover:bg-gray-50 transition";
@@ -290,82 +266,71 @@
                     <td class="py-3 px-4 font-mono text-green-600">${firstIn}</td>
                     <td class="py-3 px-4 font-mono text-orange-600">${lastOut}</td>
                     <td class="py-3 px-4 font-bold text-gray-800">${dayTotal} hrs</td>
-                    <td class="py-3 px-4 text-gray-600">${monthTotal} hrs</td>
-                `;
+                    <td class="py-3 px-4 text-gray-600">${monthTotal} hrs</td>`;
                 tbody.appendChild(tr);
             });
+    }
+
+    // ================= EMPLOYEE REGISTRATION =================
+    function toggleEmployeeForm() {
+        if (regSection.classList.contains('hidden')) {
+            regSection.classList.remove('hidden');
+            startCamera();
+        } else {
+            regSection.classList.add('hidden');
+            stopCamera();
         }
+    }
 
-        // ================= EMPLOYEE REGISTRATION LOGIC =================
-        const regSection = document.getElementById('reg-section');
-        const regVideo = document.getElementById('reg-video');
-        const regCanvas = document.getElementById('reg-canvas');
-        const regStatus = document.getElementById('reg-status');
-        let streamRef = null;
+    async function startCamera() {
+        try {
+            streamRef = await navigator.mediaDevices.getUserMedia({ video: { facingMode: 'user' } });
+            regVideo.srcObject = streamRef;
+        } catch (err) {
+            regStatus.innerText = "Camera Error";
+        }
+    }
 
-        function toggleEmployeeForm() {
-            if (regSection.classList.contains('hidden')) {
-                regSection.classList.remove('hidden');
-                startCamera();
+    function stopCamera() {
+        if (streamRef) {
+            streamRef.getTracks().forEach(track => track.stop());
+            streamRef = null;
+        }
+    }
+
+    async function registerEmployee() {
+        const name = document.getElementById('reg-name').value.trim();
+        const email = document.getElementById('reg-email').value.trim();
+        if (!name || !email) return alert("Please enter Name and Email");
+
+        regCanvas.width = regVideo.videoWidth;
+        regCanvas.height = regVideo.videoHeight;
+        regCanvas.getContext('2d').drawImage(regVideo, 0, 0);
+        const image = regCanvas.toDataURL('image/jpeg', 0.8);
+
+        regStatus.innerText = "Saving...";
+
+        try {
+            const res = await fetch('/register', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ name, email, image })
+            });
+            const data = await res.json();
+            if (data.status === 'success') {
+                regStatus.innerText = "Success!";
+                setTimeout(() => toggleEmployeeForm(), 1000);
             } else {
-                regSection.classList.add('hidden');
-                stopCamera();
+                regStatus.innerText = "Error: " + data.message;
             }
+        } catch (e) {
+            regStatus.innerText = "Server Error";
         }
+    }
 
-        async function startCamera() {
-            try {
-                streamRef = await navigator.mediaDevices.getUserMedia({ video: { facingMode: 'user' } });
-                regVideo.srcObject = streamRef;
-            } catch (err) {
-                regStatus.innerText = "Camera Error";
-            }
-        }
-
-        function stopCamera() {
-            if (streamRef) {
-                streamRef.getTracks().forEach(track => track.stop());
-                streamRef = null;
-            }
-        }
-
-        async function registerEmployee() {
-            const name = document.getElementById('reg-name').value.trim();
-            const email = document.getElementById('reg-email').value.trim();
-            if (!name || !email) return alert("Please enter Name and Email");
-
-            regCanvas.width = regVideo.videoWidth;
-            regCanvas.height = regVideo.videoHeight;
-            regCanvas.getContext('2d').drawImage(regVideo, 0, 0);
-            const image = regCanvas.toDataURL('image/jpeg', 0.8);
-
-            regStatus.innerText = "Saving...";
-            
-            try {
-                const res = await fetch('/register', {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ 
-                        name, 
-                        email,
-                        image
-                    })
-                });
-                const data = await res.json();
-                if (data.status === 'success') {
-                    regStatus.innerText = "Success!";
-                    setTimeout(() => toggleEmployeeForm(), 1000);
-                } else {
-                    regStatus.innerText = "Error: " + data.message;
-                }
-            } catch (e) {
-                regStatus.innerText = "Server Error";
-            }
-        }
-
-        // Initialize Default View
-        loadAttendanceData();
-        setInterval(loadAttendanceData, 10000); // Auto refresh attendance only
-    </script>
+    // Initialize
+    loadAttendanceData();
+    setInterval(loadAttendanceData, 10000);
+</script>
 </body>
 </html>

@@ -5,7 +5,9 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Register Device</title>
     <script src="https://cdn.tailwindcss.com"></script>
-    <style> video { transform: scaleX(-1); } </style>
+    <style> 
+        video { transform: scaleX(-1); } /* Mirror webcam */
+    </style>
 </head>
 <body class="bg-gray-50 min-h-screen flex flex-col items-center justify-center p-4">
 
@@ -36,57 +38,65 @@
         </div>
     </div>
 
-    <script>
-        // Check if already registered
-        if(localStorage.getItem('office_user')) {
-            window.location.href = '/';
+<script>
+    // Redirect if already registered
+    if(localStorage.getItem('office_user')) {
+        window.location.href = '/';
+    }
+
+    const video = document.getElementById('video');
+    const canvas = document.getElementById('canvas');
+    const msg = document.getElementById('msg');
+
+    // Start webcam
+    navigator.mediaDevices.getUserMedia({ video: { facingMode: 'user' } })
+        .then(stream => video.srcObject = stream)
+        .catch(err => {
+            msg.innerText = "Camera access denied";
+            msg.className = "text-center text-sm font-bold h-5 text-red-500";
+        });
+
+    async function register() {
+        const name = document.getElementById('reg-name').value.trim();
+        if(!name) {
+            msg.innerText = "Please enter your name";
+            msg.className = "text-center text-sm font-bold h-5 text-red-500";
+            return;
         }
 
-        const video = document.getElementById('video');
-        const canvas = document.getElementById('canvas');
-        const msg = document.getElementById('msg');
+        msg.innerText = "Processing...";
+        msg.className = "text-center text-sm font-bold h-5 text-yellow-600";
 
-        navigator.mediaDevices.getUserMedia({ video: { facingMode: 'user' } })
-            .then(s => video.srcObject = s);
+        canvas.width = video.videoWidth;
+        canvas.height = video.videoHeight;
+        canvas.getContext('2d').drawImage(video, 0, 0);
+        const imageData = canvas.toDataURL('image/jpeg', 0.8);
 
-        async function register() {
-            const name = document.getElementById('reg-name').value.trim();
-            if(!name) {
-                msg.innerText = "Please enter your name";
+        try {
+            const response = await fetch('/register', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ name: name, image: imageData })
+            });
+
+            const data = await response.json();
+
+            if(data.status === 'success') {
+                // Lock device to registered user
+                localStorage.setItem('office_user', name);
+                msg.innerText = "Registered successfully! Redirecting...";
+                msg.className = "text-center text-sm font-bold h-5 text-green-600";
+                setTimeout(() => window.location.href = '/', 1500);
+            } else {
+                msg.innerText = data.message || "Registration failed";
                 msg.className = "text-center text-sm font-bold h-5 text-red-500";
-                return;
             }
-
-            msg.innerText = "Processing...";
-            msg.className = "text-center text-sm font-bold h-5 text-yellow-600";
-
-            canvas.width = video.videoWidth;
-            canvas.height = video.videoHeight;
-            canvas.getContext('2d').drawImage(video, 0, 0);
-            const image = canvas.toDataURL('image/jpeg', 0.8);
-
-            try {
-                const res = await fetch('/register', {
-                    method: 'POST',
-                    headers: {'Content-Type': 'application/json'},
-                    body: JSON.stringify({ name: name, image: image })
-                });
-                const data = await res.json();
-
-                if(data.status === 'success') {
-                    // LOCK DEVICE
-                    localStorage.setItem('office_user', name);
-                    msg.innerText = "Success! Redirecting...";
-                    msg.className = "text-center text-sm font-bold h-5 text-green-600";
-                    setTimeout(() => window.location.href = '/', 1500);
-                } else {
-                    msg.innerText = data.message;
-                    msg.className = "text-center text-sm font-bold h-5 text-red-500";
-                }
-            } catch(e) {
-                msg.innerText = "Server Error";
-            }
+        } catch(e) {
+            console.error(e);
+            msg.innerText = "Server Error";
+            msg.className = "text-center text-sm font-bold h-5 text-red-500";
         }
-    </script>
+    }
+</script>
 </body>
 </html>
