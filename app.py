@@ -9,6 +9,7 @@ from psycopg2 import pool
 import pytz
 import requests
 import PIL.Image
+import cv2
 from flask import Flask, request, jsonify, render_template
 from flask_cors import CORS
 from dotenv import load_dotenv
@@ -20,11 +21,21 @@ app = Flask(__name__)
 CORS(app)
 
 DB_URL = os.environ.get('DATABASE_URL')
-DEEPFACE_MODEL = os.environ.get("DEEPFACE_MODEL", "VGG-Face")
-COSINE_THRESHOLD = float(os.environ.get("DEEPFACE_THRESHOLD", 0.60))
+
+# LBPH Face Recognizer Configuration
+LBPH_RADIUS = 1
+LBPH_NEIGHBORS = 8
+LBPH_GRID_X = 8
+LBPH_GRID_Y = 8
+LBPH_THRESHOLD = 60  # Lower = stricter matching
+
+# Face images storage directory
+DATA_DIR = 'data'
+os.makedirs(DATA_DIR, exist_ok=True)
 
 # ---------------- Database Pool ----------------
 _postgres_pool = None
+
 def init_connection_pool():
     global _postgres_pool
     if DB_URL and not _postgres_pool:
@@ -86,21 +97,24 @@ def init_db():
 
     c = conn.cursor()
     if DB_URL:
+        # Only store employee ID, name, and email - face images stored in folders
         c.execute('''CREATE TABLE IF NOT EXISTS employees
-                     (id SERIAL PRIMARY KEY, name TEXT, email TEXT, encoding BYTEA)''')
+                     (id SERIAL PRIMARY KEY, name TEXT, email TEXT)''')
         c.execute('''CREATE TABLE IF NOT EXISTS logs
                      (id SERIAL PRIMARY KEY, name TEXT, timestamp TIMESTAMP, type TEXT)''')
         try:
             c.execute('''CREATE INDEX IF NOT EXISTS idx_logs_name_date ON logs(name, DATE(timestamp))''')
-        except: pass
+        except:
+            pass
     else:
         c.execute('''CREATE TABLE IF NOT EXISTS employees
-                     (id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT, email TEXT, encoding BLOB)''')
+                     (id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT, email TEXT)''')
         c.execute('''CREATE TABLE IF NOT EXISTS logs
                      (id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT, timestamp DATETIME, type TEXT)''')
         try:
             c.execute('''CREATE INDEX IF NOT EXISTS idx_logs_name_date ON logs(name, DATE(timestamp))''')
-        except: pass
+        except:
+            pass
 
     if DB_URL:
         c.execute('''CREATE TABLE IF NOT EXISTS clients
@@ -113,117 +127,217 @@ def init_db():
 
 init_db()
 
-# ---------------- Helpers ----------------
+# ---------------- OpenCV Face Detection & Recognition ----------------
+face_cascade = cv2.CascadeClassifier(cv2.data.haarcascades + 'haarcascade_frontalface_default.xml')
+eye_cascade = cv2.CascadeClassifier(cv2.data.haarcascades + 'haarcascade_eye.xml')
+
+_lbph_recognizer = None
+_employee_ids = {}  # Maps employee ID to name
+_id_to_employee = {}  # Maps name to employee ID
+
+def get_lbph_recognizer():
+    """Initialize or return existing LBPH Face Recognizer"""
+    global _lbph_recognizer
+    if _lbph_recognizer is None:
+        _lbph_recognizer = cv2.face.LBPHFaceRecognizer_create(
+            radius=LBPH_RADIUS,
+            neighbors=LBPH_NEIGHBORS,
+            grid_x=LBPH_GRID_X,
+            grid_y=LBPH_GRID_Y
+        )
+        train_recognizer()
+    return _lbph_recognizer
+
+def get_employee_folder(employee_id):
+    """Get folder path for employee face images"""
+    folder_path = os.path.join(DATA_DIR, str(employee_id))
+    os.makedirs(folder_path, exist_ok=True)
+    return folder_path
+
+def save_face_image(employee_id, face_image, image_index=0):
+    """Save face image to employee folder"""
+    folder_path = get_employee_folder(employee_id)
+    image_path = os.path.join(folder_path, f"face_{image_index:04d}.jpg")
+    cv2.imwrite(image_path, face_image)
+    return image_path
+
+def load_face_images_from_folder(employee_id):
+    """Load all face images from employee folder"""
+    folder_path = get_employee_folder(employee_id)
+    face_images = []
+    
+    if not os.path.exists(folder_path):
+        return face_images
+    
+    # Load all face images from folder
+    for filename in sorted(os.listdir(folder_path)):
+        if filename.startswith('face_') and filename.endswith('.jpg'):
+            image_path = os.path.join(folder_path, filename)
+            try:
+                face_img = cv2.imread(image_path, cv2.IMREAD_GRAYSCALE)
+                if face_img is not None:
+                    # Ensure consistent size (200x200)
+                    face_img = cv2.resize(face_img, (200, 200))
+                    face_images.append(face_img)
+            except Exception as e:
+                print(f"Error loading {image_path}: {e}")
+    
+    return face_images
+
+def train_recognizer():
+    """Train LBPH recognizer with all registered faces from folders"""
+    global _lbph_recognizer, _employee_ids, _id_to_employee
+    
+    conn = get_db_connection()
+    if conn is None:
+        return
+    
+    c = conn.cursor()
+    c.execute("SELECT id, name FROM employees ORDER BY id")
+    rows = c.fetchall()
+    
+    if DB_URL:
+        return_db_connection(conn)
+    else:
+        conn.close()
+    
+    if not rows:
+        print("No employees found for training")
+        return
+    
+    faces = []
+    labels = []
+    _employee_ids = {}
+    _id_to_employee = {}
+    
+    for row in rows:
+        emp_id = row[0] if DB_URL else row['id']
+        name = row[1] if DB_URL else row['name']
+        
+        # Load face images from folder
+        face_images = load_face_images_from_folder(emp_id)
+        
+        if not face_images:
+            print(f"No face images found for employee {emp_id} ({name})")
+            continue
+        
+        # Add all face images for this employee
+        for face_img in face_images:
+            faces.append(face_img)
+            labels.append(emp_id)
+        
+        _employee_ids[emp_id] = name
+        _id_to_employee[name] = emp_id
+        print(f"Loaded {len(face_images)} face images for {name} (ID: {emp_id})")
+    
+    if faces:
+        _lbph_recognizer = cv2.face.LBPHFaceRecognizer_create(
+            radius=LBPH_RADIUS,
+            neighbors=LBPH_NEIGHBORS,
+            grid_x=LBPH_GRID_X,
+            grid_y=LBPH_GRID_Y
+        )
+        _lbph_recognizer.train(faces, np.array(labels))
+        print(f"✅ LBPH trained with {len(faces)} face images from {len(_employee_ids)} employees")
+    else:
+        print("⚠️ No face images found for training")
+
+# ---------------- Image Processing ----------------
 def decode_image(base64_string):
+    """Decode base64 image to numpy array"""
     try:
         if "base64," in base64_string:
             base64_string = base64_string.split(",")[1]
         img_data = base64.b64decode(base64_string)
         pil_image = PIL.Image.open(io.BytesIO(img_data))
         rgb_image = pil_image.convert("RGB")
-        width, height = rgb_image.size
-        if width > 250:  # smaller for CPU speed
-            ratio = 250 / width
-            new_height = int(height * ratio)
-            rgb_image = rgb_image.resize((250, new_height), PIL.Image.Resampling.LANCZOS)
         return np.array(rgb_image)
     except Exception as e:
         print(f"Image Decode Error: {e}")
         return None
 
-# ---------------- Preload DeepFace Model ----------------
-_deepface_model_instance = None
-def preload_deepface_model(model_name=DEEPFACE_MODEL):
-    global _deepface_model_instance
-    if _deepface_model_instance is None:
-        from deepface import DeepFace
-        print(f"Loading DeepFace model '{model_name}'...")
-        # For current DeepFace version we don't pass the built model
-        # into represent(), but we keep this call to warm up weights.
-        _deepface_model_instance = DeepFace.build_model(model_name)
-        print("✅ DeepFace model preloaded")
-    return _deepface_model_instance
+def detect_face(img_array):
+    """Detect face in image, return face ROI and grayscale face"""
+    gray = cv2.cvtColor(img_array, cv2.COLOR_RGB2GRAY)
+    faces = face_cascade.detectMultiScale(gray, 1.3, 5)
+    
+    if len(faces) == 0:
+        return None, None
+    
+    # Use largest face
+    largest_face = max(faces, key=lambda x: x[2] * x[3])
+    x, y, w, h = largest_face
+    
+    face_roi = gray[y:y+h, x:x+w]
+    face_roi_resized = cv2.resize(face_roi, (200, 200))
+    
+    return face_roi_resized, (x, y, w, h)
 
-def compute_embedding(img_array, model_name=DEEPFACE_MODEL, enforce_detection=True):
+def detect_eyes(face_gray):
+    """Detect eyes in face region for liveness check"""
+    eyes = eye_cascade.detectMultiScale(face_gray, 1.1, 3)
+    return len(eyes) >= 2  # At least 2 eyes detected
+
+# ---------------- Liveness Detection ----------------
+def check_liveness(images):
     """
-    Compute a face embedding using DeepFace.represent.
-    Uses numpy array input and avoids passing unsupported args like `model`.
+    Basic liveness detection: Check for movement between frames and eye presence.
+    Returns True if liveness detected, False if likely spoofed.
     """
-    from deepface import DeepFace
-    # Optionally warm up model once at startup
-    preload_deepface_model(model_name)
-    rep = DeepFace.represent(
-        img_path=img_array,
-        model_name=model_name,
-        enforce_detection=enforce_detection,
-        detector_backend='opencv'
-    )
-    # flatten embedding
-    if isinstance(rep, dict) and 'embedding' in rep:
-        vec = np.array(rep['embedding'], dtype=np.float32)
-    elif isinstance(rep, list) and len(rep) > 0:
-        if isinstance(rep[0], dict) and 'embedding' in rep[0]:
-            vec = np.array(rep[0]['embedding'], dtype=np.float32)
-        else:
-            vec = np.array(rep[0], dtype=np.float32)
-    else:
-        vec = np.array(rep, dtype=np.float32)
-    if vec.ndim > 1:
-        vec = vec.flatten()
-    return vec
-
-_face_cache = None
-_cache_timestamp = None
-CACHE_DURATION = 300  # 5 min cache
-
-def get_known_faces():
-    global _face_cache, _cache_timestamp
-    now = datetime.datetime.now()
-    if _face_cache and _cache_timestamp and (now - _cache_timestamp).total_seconds() < CACHE_DURATION:
-        return _face_cache
-    conn = get_db_connection()
-    c = conn.cursor()
-    c.execute("SELECT name, encoding FROM employees")
-    rows = c.fetchall()
-    if DB_URL:
-        return_db_connection(conn)
-    else:
-        conn.close()
-    known_names, known_encodings = [], []
-    for row in rows:
-        name = row[0] if DB_URL else row['name']
-        encoding_bytes = row[1] if DB_URL else row['encoding']
-        if encoding_bytes:
-            try:
-                arr = np.frombuffer(encoding_bytes, dtype=np.float32)
-                known_names.append(name)
-                known_encodings.append(arr)
-            except Exception as e:
-                print(f"Failed to decode {name}: {e}")
-    _face_cache = (known_names, known_encodings)
-    _cache_timestamp = now
-    return known_names, known_encodings
-
-def invalidate_face_cache():
-    global _face_cache, _cache_timestamp
-    _face_cache = None
-    _cache_timestamp = None
-
-def cosine_similarity(a, b):
-    a = np.array(a, dtype=np.float32)
-    b = np.array(b, dtype=np.float32)
-    if np.linalg.norm(a) == 0 or np.linalg.norm(b) == 0:
-        return 0.0
-    return np.dot(a, b) / (np.linalg.norm(a) * np.linalg.norm(b))
-
+    if len(images) < 2:
+        return False
+    
+    try:
+        grays = []
+        for img_array in images:
+            if img_array is None:
+                continue
+            if len(img_array.shape) == 3:
+                gray = cv2.cvtColor(img_array, cv2.COLOR_RGB2GRAY)
+            else:
+                gray = img_array
+            grays.append(gray)
+        
+        if len(grays) < 2:
+            return False
+        
+        # Check 1: Movement detection
+        movements = []
+        for i in range(len(grays) - 1):
+            diff = cv2.absdiff(grays[i], grays[i+1])
+            movement = np.mean(diff)
+            movements.append(movement)
+        
+        avg_movement = np.mean(movements)
+        
+        # Check 2: Eye detection in last frame
+        eyes_detected = False
+        if len(grays) > 0:
+            last_gray = grays[-1]
+            # Resize for eye detection if needed
+            if last_gray.shape[0] < 100:
+                last_gray = cv2.resize(last_gray, (200, 200))
+            eyes_detected = detect_eyes(last_gray)
+        
+        # Thresholds: Real faces have movement and eyes
+        if avg_movement < 3.0:
+            print(f"Liveness check failed: Low movement ({avg_movement:.2f})")
+            return False
+        
+        if not eyes_detected:
+            print("Liveness check failed: Eyes not detected")
+            return False
+        
+        print(f"Liveness check passed: Movement={avg_movement:.2f}, Eyes={eyes_detected}")
+        return True
+        
+    except Exception as e:
+        print(f"Liveness check error: {e}")
+        return False
 
 # ---------------- Attendance helpers ----------------
 def get_last_log_type(name, conn=None):
-    """
-    Return the last log type (LOGIN / LOGOUT) for *today* for a given employee.
-    This keeps the original behaviour: first scan of the day = LOGIN,
-    second scan of the day = LOGOUT, and from the next day it resets.
-    """
+    """Return the last log type (LOGIN / LOGOUT) for *today* for a given employee"""
     should_close = False
     if conn is None:
         conn = get_db_connection()
@@ -258,7 +372,6 @@ def get_last_log_type(name, conn=None):
     if not row:
         return None
 
-    # For sqlite we use row_factory=Row so we can index by column name
     return row[0] if DB_URL else row["type"]
 
 # ---------------- Routes ----------------
@@ -270,13 +383,12 @@ def home():
 def admin():
     return render_template('admin.html')
 
-
 @app.route('/api/clients', methods=['GET'])
 def get_clients():
-    """Return all client packages for the admin client table."""
+    """Return all client packages for the admin client table"""
     conn = get_db_connection()
     if conn is None:
-        return jsonify([])  # fail-soft
+        return jsonify([])
     c = conn.cursor()
     c.execute("SELECT * FROM clients ORDER BY id DESC")
     rows = c.fetchall()
@@ -288,48 +400,31 @@ def get_clients():
     clients = []
     for row in rows:
         if DB_URL:
-            cid = row[0]
-            name = row[1]
-            start_date = row[2]
-            end_date = row[3]
-            cost = row[4]
+            cid, name, start_date, end_date, cost = row[0], row[1], row[2], row[3], row[4]
         else:
-            cid = row["id"]
-            name = row["name"]
-            start_date = row["start_date"]
-            end_date = row["end_date"]
-            cost = row["cost"]
+            cid, name, start_date, end_date, cost = row["id"], row["name"], row["start_date"], row["end_date"], row["cost"]
 
-        # Keep dates formatted as DD-MM-YYYY to match existing frontend logic
         try:
             if start_date:
-                start_date = datetime.datetime.strptime(
-                    start_date, "%Y-%m-%d"
-                ).strftime("%d-%m-%Y")
+                start_date = datetime.datetime.strptime(start_date, "%Y-%m-%d").strftime("%d-%m-%Y")
             if end_date:
-                end_date = datetime.datetime.strptime(
-                    end_date, "%Y-%m-%d"
-                ).strftime("%d-%m-%Y")
+                end_date = datetime.datetime.strptime(end_date, "%Y-%m-%d").strftime("%d-%m-%Y")
         except Exception:
-            # If already in desired format, just keep as-is
             pass
 
-        clients.append(
-            {
-                "id": cid,
-                "name": name,
-                "start_date": start_date,
-                "end_date": end_date,
-                "cost": cost,
-            }
-        )
+        clients.append({
+            "id": cid,
+            "name": name,
+            "start_date": start_date,
+            "end_date": end_date,
+            "cost": cost,
+        })
 
     return jsonify(clients)
 
-
 @app.route('/api/clients/add', methods=['POST'])
 def add_client():
-    """Add a new client package from the admin panel."""
+    """Add a new client package from the admin panel"""
     try:
         data = request.json or {}
         name = data.get("name")
@@ -368,96 +463,146 @@ def add_client():
 
 @app.route('/register', methods=['POST'])
 def register():
+    """Register a new employee and save face images to folder"""
     try:
         data = request.json
         name = data.get('name')
         email = data.get('email')
         image_data = data.get('image')
+        
         if not name or not image_data:
             return jsonify({"status": "error", "message": "Missing Data"}), 400
+        
         image = decode_image(image_data)
         if image is None:
             return jsonify({"status": "error", "message": "Invalid Image Format"}), 400
-        embedding = compute_embedding(image)
-        embedding_bytes = embedding.astype(np.float32).tobytes()
+        
+        # Detect and extract face
+        face_gray, face_rect = detect_face(image)
+        if face_gray is None:
+            return jsonify({"status": "error", "message": "No face detected. Please ensure your face is clearly visible"}), 400
+        
+        # Check for eyes (liveness)
+        if not detect_eyes(face_gray):
+            return jsonify({"status": "error", "message": "Eyes not detected. Please look directly at the camera"}), 400
+        
+        # Insert employee into database first to get ID
         conn = get_db_connection()
+        if conn is None:
+            return jsonify({"status": "error", "message": "Database connection failed"}), 500
+        
         c = conn.cursor()
         if DB_URL:
-            c.execute("INSERT INTO employees (name, email, encoding) VALUES (%s, %s, %s)",
-                      (name, email, psycopg2.Binary(embedding_bytes)))
+            c.execute("INSERT INTO employees (name, email) VALUES (%s, %s) RETURNING id",
+                      (name, email))
+            employee_id = c.fetchone()[0]
         else:
-            c.execute("INSERT INTO employees (name, email, encoding) VALUES (?, ?, ?)",
-                      (name, email, sqlite3.Binary(embedding_bytes)))
-        # Ensure data is actually written to the DB
+            c.execute("INSERT INTO employees (name, email) VALUES (?, ?)",
+                      (name, email))
+            employee_id = c.lastrowid
+        
         conn.commit()
         if DB_URL:
             return_db_connection(conn)
         else:
             conn.close()
-        invalidate_face_cache()
+        
+        # Save face image to folder
+        save_face_image(employee_id, face_gray, image_index=0)
+        
+        # Retrain recognizer with new face
+        train_recognizer()
+        
         return jsonify({"status": "success", "message": f"Registered {name}!"})
     except Exception as e:
         print(f"REGISTER ERROR: {e}")
         return jsonify({"status": "error", "message": str(e)}), 500
 
+@app.route('/train', methods=['POST'])
+def train():
+    """Manually trigger LBPH recognizer training"""
+    try:
+        train_recognizer()
+        return jsonify({"status": "success", "message": "Recognizer trained successfully"})
+    except Exception as e:
+        print(f"TRAIN ERROR: {e}")
+        return jsonify({"status": "error", "message": str(e)}), 500
+
 @app.route('/scan', methods=['POST'])
 def scan():
+    """Scan face and log attendance using LBPH recognizer"""
     try:
         data = request.json
         image_data_list = data.get('images', [data.get('image')])
         if not isinstance(image_data_list, list):
             image_data_list = [image_data_list]
-        known_names, known_encodings = get_known_faces()
-        if not known_names or not known_encodings:
+        
+        if not image_data_list:
+            return jsonify({"status": "error", "message": "No images provided"}), 400
+        
+        # Decode all images for liveness check
+        images = []
+        for img_data in image_data_list:
+            img = decode_image(img_data)
+            if img is not None:
+                images.append(img)
+        
+        if not images:
+            return jsonify({"status": "error", "message": "Invalid images"}), 400
+        
+        # Liveness detection
+        if len(images) > 1:
+            if not check_liveness(images):
+                return jsonify({"status": "error", "message": "Liveness check failed. Please use a live camera feed"}), 400
+        
+        # Use last image for recognition
+        image = images[-1]
+        face_gray, face_rect = detect_face(image)
+        
+        if face_gray is None:
+            return jsonify({"status": "error", "message": "No face detected. Please ensure your face is clearly visible"}), 400
+        
+        # Recognize face using LBPH
+        recognizer = get_lbph_recognizer()
+        
+        if len(_employee_ids) == 0:
             return jsonify({"status": "error", "message": "No registered users"}), 400
-        # decode last image
-        image = decode_image(image_data_list[-1])
-        if image is None:
-            return jsonify({"status": "error", "message": "Invalid image"}), 400
-        unknown_embedding = compute_embedding(image)
-        unknown_embedding /= np.linalg.norm(unknown_embedding)
-        sims = []
-        for ke in known_encodings:
-            if len(ke) != len(unknown_embedding):
-                continue
-            ke_norm = ke / np.linalg.norm(ke)
-            sims.append(np.dot(unknown_embedding, ke_norm))
-        if not sims:
-            return jsonify({"status": "error", "message": "Face data mismatch"}), 400
-        best_idx = int(np.argmax(sims))
-        best_sim = sims[best_idx]
-        if best_sim < COSINE_THRESHOLD:
-            return jsonify({"status": "error", "message": "Face not recognized"}), 401
-        name = known_names[best_idx]
+        
+        label_id, confidence = recognizer.predict(face_gray)
+        
+        # LBPH: Lower confidence = better match (0 = perfect match)
+        if confidence > LBPH_THRESHOLD:
+            return jsonify({"status": "error", "message": "Face not recognized. Please register first"}), 401
+        
+        name = _employee_ids.get(label_id)
+        if not name:
+            return jsonify({"status": "error", "message": "Employee not found"}), 401
+        
+        # Log attendance
         now = datetime.datetime.now()
-
         conn = get_db_connection()
         if conn is None:
             return jsonify({"status": "error", "message": "Database connection failed"}), 500
+        
         c = conn.cursor()
-
-        # Determine today's last log to keep the original behaviour:
-        # first scan of the day = LOGIN, second = LOGOUT, later scans show "already marked".
         last_type = get_last_log_type(name, conn)
+        
         if last_type == "LOGIN":
             new_type = "LOGOUT"
             message = f"Goodbye, {name}!"
         elif last_type == "LOGOUT":
-            # Already logged in and out today – don't create more rows
             if DB_URL:
                 return_db_connection(conn)
             else:
                 conn.close()
-            return jsonify(
-                {
-                    "status": "error",
-                    "message": "Today's attendance is already marked for this employee",
-                }
-            ), 400
+            return jsonify({
+                "status": "error",
+                "message": "Today's attendance is already marked for this employee",
+            }), 400
         else:
             new_type = "LOGIN"
             message = f"Welcome, {name}!"
-
+        
         if DB_URL:
             c.execute(
                 "INSERT INTO logs (name, timestamp, type) VALUES (%s, %s, %s)",
@@ -472,19 +617,24 @@ def scan():
             )
             conn.commit()
             conn.close()
-
-        return jsonify({"status": "success", "name": name, "type": new_type, "message": message, "similarity": float(best_sim)})
+        
+        # Convert confidence to similarity score (0-100, higher = better)
+        similarity = max(0, 100 - confidence)
+        
+        return jsonify({
+            "status": "success",
+            "name": name,
+            "type": new_type,
+            "message": message,
+            "similarity": float(similarity)
+        })
     except Exception as e:
         print(f"SCAN ERROR: {e}")
         return jsonify({"status": "error", "message": "Face recognition temporarily unavailable"}), 500
 
-
 @app.route('/api/report', methods=['GET'])
 def report():
-    """
-    Return raw log entries for the admin attendance table.
-    Each row: { name, date (DD-MM-YYYY), time (HH:MM), type }.
-    """
+    """Return raw log entries for the admin attendance table"""
     conn = get_db_connection()
     if conn is None:
         return jsonify([])
@@ -504,42 +654,160 @@ def report():
 
         if isinstance(t, str):
             try:
-                # strip microseconds if present
                 t_obj = datetime.datetime.strptime(t.split(".")[0], "%Y-%m-%d %H:%M:%S")
             except Exception:
                 continue
         else:
             t_obj = t
 
-        data.append(
-            {
-                "name": n,
-                "date": t_obj.strftime("%d-%m-%Y"),
-                "time": t_obj.strftime("%H:%M"),
-                "type": s,
-            }
-        )
+        data.append({
+            "name": n,
+            "date": t_obj.strftime("%d-%m-%Y"),
+            "time": t_obj.strftime("%H:%M"),
+            "type": s,
+        })
 
     return jsonify(data)
+
+# ---------------- Monthly Reports (Email) ----------------
+def send_custom_email(to_email, subject, html_content):
+    """Send email using Brevo API"""
+    url = "https://api.brevo.com/v3/smtp/email"
+    api_key = os.environ.get('BREVO_API_KEY')
+    admin_email = os.environ.get('ADMIN_EMAIL')
+
+    if not api_key:
+        print("No BREVO_API_KEY found")
+        return
+
+    headers = {
+        "accept": "application/json",
+        "api-key": api_key,
+        "content-type": "application/json"
+    }
+
+    payload = {
+        "sender": {"name": "Office Admin", "email": admin_email},
+        "to": [{"email": to_email}],
+        "subject": subject,
+        "htmlContent": html_content
+    }
+
+    try:
+        response = requests.post(url, headers=headers, json=payload)
+        response.raise_for_status()
+    except Exception as e:
+        print(f"Email Failed: {e}")
+
+def send_monthly_reports():
+    """Send monthly attendance reports to all employees"""
+    _ist_timezone = pytz.timezone('Asia/Kolkata')
+    now = datetime.datetime.now(_ist_timezone)
+    start_of_month = now.replace(day=1, hour=0, minute=0, second=0, microsecond=0)
+
+    conn = get_db_connection()
+    if conn is None:
+        return "Database unavailable"
+    
+    c = conn.cursor()
+    c.execute("SELECT name, email FROM employees WHERE email IS NOT NULL")
+    employees = c.fetchall()
+
+    emails_sent = 0
+
+    for emp in employees:
+        emp_name = emp[0] if DB_URL else emp['name']
+        emp_email = emp[1] if DB_URL else emp['email']
+
+        if not emp_email:
+            continue
+
+        if DB_URL:
+            c.execute("SELECT timestamp, type FROM logs WHERE name=%s AND timestamp >= %s ORDER BY timestamp ASC",
+                      (emp_name, start_of_month))
+        else:
+            c.execute("SELECT timestamp, type FROM logs WHERE name=? AND timestamp >= ? ORDER BY timestamp ASC",
+                      (emp_name, start_of_month))
+
+        logs = c.fetchall()
+        total_seconds = 0
+        last_login = None
+
+        for log in logs:
+            l_time = log[0] if DB_URL else log['timestamp']
+            l_type = log[1] if DB_URL else log['type']
+
+            if isinstance(l_time, str):
+                try:
+                    l_time = datetime.datetime.strptime(l_time.split('.')[0], "%Y-%m-%d %H:%M:%S")
+                except:
+                    continue
+
+            if l_type == 'LOGIN':
+                last_login = l_time
+            elif l_type == 'LOGOUT' and last_login:
+                duration = (l_time - last_login).total_seconds()
+                total_seconds += duration
+                last_login = None
+
+        total_hours = round(total_seconds / 3600, 2)
+
+        subject = f"Monthly Attendance Report: {now.strftime('%B %Y')}"
+        html_content = f"""
+        <h3>Hello {emp_name},</h3>
+        <p>Here is your attendance summary for <b>{now.strftime('%B')}</b>:</p>
+        <h2>Total Hours: {total_hours} hrs</h2>
+        <p>If you have any queries, please contact Admin before the 30th.</p>
+        <p>Regards,<br>Office Admin</p>
+        """
+
+        send_custom_email(emp_email, subject, html_content)
+        emails_sent += 1
+
+    if DB_URL:
+        return_db_connection(conn)
+    else:
+        conn.close()
+    
+    print(f"Monthly reports sent to {emails_sent} employees at {now.strftime('%Y-%m-%d %H:%M:%S IST')}")
+    return f"Report sent to {emails_sent} employees."
+
+@app.route('/run-monthly-reports', methods=['GET'])
+def run_monthly_reports():
+    """Cron-job.org compatible endpoint for monthly reports"""
+    secret = request.args.get('key')
+    expected_secret = os.environ.get('CRON_SECRET', 'default-secret')
+    
+    if secret != expected_secret:
+        return "Unauthorized", 401
+    
+    result = send_monthly_reports()
+    return result
 
 # ---------------- Scheduler ----------------
 scheduler = None
 _ist_timezone = pytz.timezone('Asia/Kolkata')
+
 def setup_scheduler():
     global scheduler
     scheduler = BackgroundScheduler(timezone=_ist_timezone)
     scheduler.add_job(
-        func=lambda: print("Monthly report placeholder"),
+        func=send_monthly_reports,
         trigger=CronTrigger(day=25, hour=17, minute=0),
         id='monthly_reports',
+        name='Send monthly attendance reports',
         replace_existing=True
     )
     scheduler.start()
-    print("✅ Scheduler started")
-setup_scheduler()
+    print("✅ Scheduler started: Monthly reports will be sent on 25th of every month at 5:00 PM IST")
+
+# Start scheduler only in main process
+if os.environ.get('WERKZEUG_RUN_MAIN') == 'true' or __name__ == '__main__':
+    setup_scheduler()
 
 # ---------------- Run App ----------------
 if __name__ == '__main__':
-    preload_deepface_model()
+    # Initialize LBPH recognizer
+    get_lbph_recognizer()
     port = int(os.environ.get('PORT', 5000))
     app.run(host='0.0.0.0', port=port, debug=False)

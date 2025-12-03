@@ -4,3 +4,4 @@ attendance.db
 *.whl
 venv/
 *.pyc
+data/
