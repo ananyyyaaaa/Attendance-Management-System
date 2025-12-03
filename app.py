@@ -139,13 +139,17 @@ def get_lbph_recognizer():
     """Initialize or return existing LBPH Face Recognizer"""
     global _lbph_recognizer
     if _lbph_recognizer is None:
-        _lbph_recognizer = cv2.face.LBPHFaceRecognizer_create(
-            radius=LBPH_RADIUS,
-            neighbors=LBPH_NEIGHBORS,
-            grid_x=LBPH_GRID_X,
-            grid_y=LBPH_GRID_Y
-        )
-        train_recognizer()
+        print("Initializing LBPH recognizer...")
+        train_recognizer()  # Train first, which will create the recognizer
+        # If training didn't create a recognizer (no faces), create an empty one
+        if _lbph_recognizer is None:
+            _lbph_recognizer = cv2.face.LBPHFaceRecognizer_create(
+                radius=LBPH_RADIUS,
+                neighbors=LBPH_NEIGHBORS,
+                grid_x=LBPH_GRID_X,
+                grid_y=LBPH_GRID_Y
+            )
+            print("⚠️ Created empty LBPH recognizer (no training data)")
     return _lbph_recognizer
 
 def get_employee_folder(employee_id):
@@ -158,7 +162,11 @@ def save_face_image(employee_id, face_image, image_index=0):
     """Save face image to employee folder"""
     folder_path = get_employee_folder(employee_id)
     image_path = os.path.join(folder_path, f"face_{image_index:04d}.jpg")
-    cv2.imwrite(image_path, face_image)
+    success = cv2.imwrite(image_path, face_image)
+    if success:
+        print(f"✅ Saved face image to {image_path}")
+    else:
+        print(f"⚠️ Failed to save face image to {image_path}")
     return image_path
 
 def load_face_images_from_folder(employee_id):
@@ -167,20 +175,31 @@ def load_face_images_from_folder(employee_id):
     face_images = []
     
     if not os.path.exists(folder_path):
+        print(f"⚠️ Folder does not exist: {folder_path}")
         return face_images
     
     # Load all face images from folder
-    for filename in sorted(os.listdir(folder_path)):
+    try:
+        files = os.listdir(folder_path)
+        print(f"📁 Found {len(files)} files in {folder_path}")
+    except Exception as e:
+        print(f"⚠️ Error listing folder {folder_path}: {e}")
+        return face_images
+    
+    for filename in sorted(files):
         if filename.startswith('face_') and filename.endswith('.jpg'):
             image_path = os.path.join(folder_path, filename)
             try:
                 face_img = cv2.imread(image_path, cv2.IMREAD_GRAYSCALE)
-                if face_img is not None:
+                if face_img is not None and face_img.size > 0:
                     # Ensure consistent size (200x200)
                     face_img = cv2.resize(face_img, (200, 200))
                     face_images.append(face_img)
+                    print(f"  ✅ Loaded {filename} ({face_img.shape})")
+                else:
+                    print(f"  ⚠️ Failed to load {filename} (image is None or empty)")
             except Exception as e:
-                print(f"Error loading {image_path}: {e}")
+                print(f"  ⚠️ Error loading {image_path}: {e}")
     
     return face_images
 
@@ -190,6 +209,7 @@ def train_recognizer():
     
     conn = get_db_connection()
     if conn is None:
+        print("⚠️ Cannot train: Database connection failed")
         return
     
     c = conn.cursor()
@@ -202,13 +222,17 @@ def train_recognizer():
         conn.close()
     
     if not rows:
-        print("No employees found for training")
+        print("⚠️ No employees found in database for training")
+        _employee_ids = {}
+        _id_to_employee = {}
         return
     
     faces = []
     labels = []
     _employee_ids = {}
     _id_to_employee = {}
+    
+    print(f"Found {len(rows)} employees in database, loading face images...")
     
     for row in rows:
         emp_id = row[0] if DB_URL else row['id']
@@ -218,7 +242,7 @@ def train_recognizer():
         face_images = load_face_images_from_folder(emp_id)
         
         if not face_images:
-            print(f"No face images found for employee {emp_id} ({name})")
+            print(f"⚠️ No face images found for employee {emp_id} ({name}) in folder {os.path.join(DATA_DIR, str(emp_id))}")
             continue
         
         # Add all face images for this employee
@@ -228,19 +252,23 @@ def train_recognizer():
         
         _employee_ids[emp_id] = name
         _id_to_employee[name] = emp_id
-        print(f"Loaded {len(face_images)} face images for {name} (ID: {emp_id})")
+        print(f"✅ Loaded {len(face_images)} face images for {name} (ID: {emp_id})")
     
     if faces:
-        _lbph_recognizer = cv2.face.LBPHFaceRecognizer_create(
-            radius=LBPH_RADIUS,
-            neighbors=LBPH_NEIGHBORS,
-            grid_x=LBPH_GRID_X,
-            grid_y=LBPH_GRID_Y
-        )
+        # Create or reuse recognizer
+        if _lbph_recognizer is None:
+            _lbph_recognizer = cv2.face.LBPHFaceRecognizer_create(
+                radius=LBPH_RADIUS,
+                neighbors=LBPH_NEIGHBORS,
+                grid_x=LBPH_GRID_X,
+                grid_y=LBPH_GRID_Y
+            )
         _lbph_recognizer.train(faces, np.array(labels))
         print(f"✅ LBPH trained with {len(faces)} face images from {len(_employee_ids)} employees")
+        print(f"✅ Employee IDs mapped: {_employee_ids}")
     else:
-        print("⚠️ No face images found for training")
+        print("⚠️ No face images found for training - recognizer not trained")
+        _lbph_recognizer = None
 
 # ---------------- Image Processing ----------------
 def decode_image(base64_string):
@@ -337,7 +365,7 @@ def check_liveness(images):
 
 # ---------------- Attendance helpers ----------------
 def get_last_log_type(name, conn=None):
-    """Return the last log type (LOGIN / LOGOUT) for *today* for a given employee"""
+    """Return the last log type (LOGIN / LOGOUT) for *today* (IST) for a given employee"""
     should_close = False
     if conn is None:
         conn = get_db_connection()
@@ -348,18 +376,25 @@ def get_last_log_type(name, conn=None):
 
     c = conn.cursor()
     try:
+        _ist_timezone = pytz.timezone('Asia/Kolkata')
+        # Get today's date in IST
+        today_ist = datetime.datetime.now(_ist_timezone).date()
+        
         if DB_URL:
-            today = datetime.date.today()
+            # PostgreSQL: Timestamps stored as UTC, convert to IST for date comparison
+            today_str = today_ist.strftime('%Y-%m-%d')
             c.execute(
-                "SELECT type FROM logs WHERE name = %s AND DATE(timestamp) = %s "
+                "SELECT type FROM logs WHERE name = %s AND DATE(timestamp AT TIME ZONE 'UTC' AT TIME ZONE 'Asia/Kolkata') = %s "
                 "ORDER BY id DESC LIMIT 1",
-                (name, today),
+                (name, today_str),
             )
         else:
+            # SQLite: Compare with IST date (timestamps stored as IST)
+            today_str = today_ist.strftime('%Y-%m-%d')
             c.execute(
-                "SELECT type FROM logs WHERE name = ? AND DATE(timestamp) = DATE('now') "
+                "SELECT type FROM logs WHERE name = ? AND DATE(timestamp) = ? "
                 "ORDER BY id DESC LIMIT 1",
-                (name,),
+                (name, today_str),
             )
         row = c.fetchone()
     finally:
@@ -523,10 +558,28 @@ def train():
     """Manually trigger LBPH recognizer training"""
     try:
         train_recognizer()
-        return jsonify({"status": "success", "message": "Recognizer trained successfully"})
+        return jsonify({
+            "status": "success", 
+            "message": "Recognizer trained successfully",
+            "employee_count": len(_employee_ids),
+            "employee_ids": _employee_ids
+        })
     except Exception as e:
         print(f"TRAIN ERROR: {e}")
+        import traceback
+        traceback.print_exc()
         return jsonify({"status": "error", "message": str(e)}), 500
+
+@app.route('/api/status', methods=['GET'])
+def status():
+    """Check recognizer status"""
+    return jsonify({
+        "recognizer_initialized": _lbph_recognizer is not None,
+        "employee_count": len(_employee_ids),
+        "employee_ids": _employee_ids,
+        "data_dir": DATA_DIR,
+        "data_dir_exists": os.path.exists(DATA_DIR)
+    })
 
 @app.route('/scan', methods=['POST'])
 def scan():
@@ -565,8 +618,13 @@ def scan():
         # Recognize face using LBPH
         recognizer = get_lbph_recognizer()
         
-        if len(_employee_ids) == 0:
-            return jsonify({"status": "error", "message": "No registered users"}), 400
+        if recognizer is None or len(_employee_ids) == 0:
+            print(f"⚠️ Recognition failed: recognizer={recognizer is not None}, employee_ids={len(_employee_ids)}")
+            # Try retraining
+            train_recognizer()
+            recognizer = get_lbph_recognizer()
+            if recognizer is None or len(_employee_ids) == 0:
+                return jsonify({"status": "error", "message": "No registered users found. Please register employees first."}), 400
         
         label_id, confidence = recognizer.predict(face_gray)
         
@@ -578,8 +636,9 @@ def scan():
         if not name:
             return jsonify({"status": "error", "message": "Employee not found"}), 401
         
-        # Log attendance
-        now = datetime.datetime.now()
+        # Log attendance - use IST timezone
+        _ist_timezone = pytz.timezone('Asia/Kolkata')
+        now_ist = datetime.datetime.now(_ist_timezone)
         conn = get_db_connection()
         if conn is None:
             return jsonify({"status": "error", "message": "Database connection failed"}), 500
@@ -603,17 +662,27 @@ def scan():
             new_type = "LOGIN"
             message = f"Welcome, {name}!"
         
+        # Store timestamp - for PostgreSQL, store as UTC then convert on retrieval
+        # For SQLite, store as naive IST datetime
+        if DB_URL:
+            # Convert IST to UTC for PostgreSQL storage
+            now_utc = now_ist.astimezone(pytz.UTC)
+            now_to_store = now_utc.replace(tzinfo=None)  # Store as naive UTC
+        else:
+            # SQLite: Store as naive IST datetime
+            now_to_store = now_ist.replace(tzinfo=None)
+        
         if DB_URL:
             c.execute(
                 "INSERT INTO logs (name, timestamp, type) VALUES (%s, %s, %s)",
-                (name, now, new_type),
+                (name, now_to_store, new_type),
             )
             conn.commit()
             return_db_connection(conn)
         else:
             c.execute(
                 "INSERT INTO logs (name, timestamp, type) VALUES (?, ?, ?)",
-                (name, now, new_type),
+                (name, now_to_store, new_type),
             )
             conn.commit()
             conn.close()
@@ -646,19 +715,39 @@ def report():
     else:
         conn.close()
 
+    _ist_timezone = pytz.timezone('Asia/Kolkata')
+    _utc_timezone = pytz.UTC
     data = []
     for row in rows:
         n = row[0] if DB_URL else row["name"]
         t = row[1] if DB_URL else row["timestamp"]
         s = row[2] if DB_URL else row["type"]
 
+        # Parse timestamp
         if isinstance(t, str):
             try:
                 t_obj = datetime.datetime.strptime(t.split(".")[0], "%Y-%m-%d %H:%M:%S")
             except Exception:
-                continue
+                try:
+                    # Try with microseconds
+                    t_obj = datetime.datetime.strptime(t.split(".")[0], "%Y-%m-%d %H:%M:%S")
+                except Exception:
+                    continue
         else:
             t_obj = t
+
+        # Convert to IST based on database type
+        if isinstance(t_obj, datetime.datetime) and t_obj.tzinfo is None:
+            if DB_URL:
+                # PostgreSQL: Stored as UTC (naive), so localize as UTC then convert to IST
+                t_obj = _utc_timezone.localize(t_obj)
+                t_obj = t_obj.astimezone(_ist_timezone)
+            else:
+                # SQLite: Stored as IST (naive), so localize as IST
+                t_obj = _ist_timezone.localize(t_obj)
+        elif isinstance(t_obj, datetime.datetime) and t_obj.tzinfo:
+            # Already has timezone, convert to IST
+            t_obj = t_obj.astimezone(_ist_timezone)
 
         data.append({
             "name": n,
@@ -740,8 +829,26 @@ def send_monthly_reports():
             if isinstance(l_time, str):
                 try:
                     l_time = datetime.datetime.strptime(l_time.split('.')[0], "%Y-%m-%d %H:%M:%S")
+                    # Convert based on database type
+                    if DB_URL:
+                        # PostgreSQL: Stored as UTC, convert to IST
+                        l_time = pytz.UTC.localize(l_time).astimezone(_ist_timezone)
+                    else:
+                        # SQLite: Stored as IST
+                        l_time = _ist_timezone.localize(l_time)
                 except:
                     continue
+            elif isinstance(l_time, datetime.datetime):
+                # Convert based on database type
+                if l_time.tzinfo is None:
+                    if DB_URL:
+                        # PostgreSQL: Stored as UTC
+                        l_time = pytz.UTC.localize(l_time).astimezone(_ist_timezone)
+                    else:
+                        # SQLite: Stored as IST
+                        l_time = _ist_timezone.localize(l_time)
+                else:
+                    l_time = l_time.astimezone(_ist_timezone)
 
             if l_type == 'LOGIN':
                 last_login = l_time
@@ -808,6 +915,10 @@ if os.environ.get('WERKZEUG_RUN_MAIN') == 'true' or __name__ == '__main__':
 # ---------------- Run App ----------------
 if __name__ == '__main__':
     # Initialize LBPH recognizer
+    print("🚀 Starting application...")
+    print(f"📁 Data directory: {os.path.abspath(DATA_DIR)}")
+    print(f"📁 Data directory exists: {os.path.exists(DATA_DIR)}")
     get_lbph_recognizer()
+    print(f"✅ Recognizer initialized. Employee IDs: {_employee_ids}")
     port = int(os.environ.get('PORT', 5000))
     app.run(host='0.0.0.0', port=port, debug=False)
