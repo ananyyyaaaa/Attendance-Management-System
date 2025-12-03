@@ -8,3 +8,8 @@ services:
     envVars:
       - key: PORT
         value: 10000
+
+apt_packages:
+  - libgl1-mesa-glx
+  - libglib2.0-0
+
