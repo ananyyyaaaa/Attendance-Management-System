@@ -215,6 +215,10 @@ def cosine_similarity(a, b):
 def home():
     return render_template('index.html')
 
+@app.route('/admin')
+def admin():
+    return render_template('admin.html')
+
 @app.route('/register', methods=['POST'])
 def register():
     try:
