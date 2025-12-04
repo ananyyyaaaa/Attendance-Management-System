@@ -27,7 +27,7 @@ LBPH_RADIUS = 1
 LBPH_NEIGHBORS = 8
 LBPH_GRID_X = 8
 LBPH_GRID_Y = 8
-LBPH_THRESHOLD = 60  # Lower = stricter matching
+LBPH_THRESHOLD = 80  # Lower = stricter matching (increased from 60 to be more lenient)
 
 # Face images storage directory
 DATA_DIR = 'data'
@@ -44,9 +44,9 @@ def init_connection_pool():
                 _postgres_pool = pool.SimpleConnectionPool(1, 10, DB_URL)
             else:
                 _postgres_pool = pool.SimpleConnectionPool(1, 10, DB_URL, sslmode='require')
-            print("✅ Connection pool initialized")
+            pass
         except Exception as e:
-            print(f"⚠️ Connection pool failed: {e}")
+            pass
 
 def get_db_connection():
     global _postgres_pool
@@ -97,9 +97,10 @@ def init_db():
 
     c = conn.cursor()
     if DB_URL:
-        # Only store employee ID, name, and email - face images stored in folders
+        # Store employee ID, name, email (images stored separately in employee_images table)
         c.execute('''CREATE TABLE IF NOT EXISTS employees
                      (id SERIAL PRIMARY KEY, name TEXT, email TEXT)''')
+        # Note: image column removed - images now stored in employee_images table
         c.execute('''CREATE TABLE IF NOT EXISTS logs
                      (id SERIAL PRIMARY KEY, name TEXT, timestamp TIMESTAMP, type TEXT)''')
         try:
@@ -109,10 +110,31 @@ def init_db():
     else:
         c.execute('''CREATE TABLE IF NOT EXISTS employees
                      (id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT, email TEXT)''')
+        # Note: image column removed - images now stored in employee_images table
         c.execute('''CREATE TABLE IF NOT EXISTS logs
                      (id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT, timestamp DATETIME, type TEXT)''')
         try:
             c.execute('''CREATE INDEX IF NOT EXISTS idx_logs_name_date ON logs(name, DATE(timestamp))''')
+        except:
+            pass
+
+    # Create employee_images table for storing multiple images per employee
+    # NOTE: Data in NeonDB persists across Render deploys since it's an external managed database
+    if DB_URL:
+        c.execute('''CREATE TABLE IF NOT EXISTS employee_images
+                     (id SERIAL PRIMARY KEY, employee_id INTEGER REFERENCES employees(id) ON DELETE CASCADE, 
+                      image BYTEA NOT NULL, created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP)''')
+        # Create index for faster queries
+        try:
+            c.execute('''CREATE INDEX IF NOT EXISTS idx_employee_images_employee_id ON employee_images(employee_id)''')
+        except:
+            pass
+    else:
+        c.execute('''CREATE TABLE IF NOT EXISTS employee_images
+                     (id INTEGER PRIMARY KEY AUTOINCREMENT, employee_id INTEGER REFERENCES employees(id) ON DELETE CASCADE, 
+                      image BLOB NOT NULL, created_at DATETIME DEFAULT CURRENT_TIMESTAMP)''')
+        try:
+            c.execute('''CREATE INDEX IF NOT EXISTS idx_employee_images_employee_id ON employee_images(employee_id)''')
         except:
             pass
 
@@ -139,7 +161,6 @@ def get_lbph_recognizer():
     """Initialize or return existing LBPH Face Recognizer"""
     global _lbph_recognizer
     if _lbph_recognizer is None:
-        print("Initializing LBPH recognizer...")
         train_recognizer()  # Train first, which will create the recognizer
         # If training didn't create a recognizer (no faces), create an empty one
         if _lbph_recognizer is None:
@@ -149,7 +170,6 @@ def get_lbph_recognizer():
                 grid_x=LBPH_GRID_X,
                 grid_y=LBPH_GRID_Y
             )
-            print("⚠️ Created empty LBPH recognizer (no training data)")
     return _lbph_recognizer
 
 def get_employee_folder(employee_id):
@@ -162,54 +182,87 @@ def save_face_image(employee_id, face_image, image_index=0):
     """Save face image to employee folder"""
     folder_path = get_employee_folder(employee_id)
     image_path = os.path.join(folder_path, f"face_{image_index:04d}.jpg")
-    success = cv2.imwrite(image_path, face_image)
-    if success:
-        print(f"✅ Saved face image to {image_path}")
-    else:
-        print(f"⚠️ Failed to save face image to {image_path}")
+    cv2.imwrite(image_path, face_image)
     return image_path
 
-def load_face_images_from_folder(employee_id):
-    """Load all face images from employee folder"""
-    folder_path = get_employee_folder(employee_id)
+def load_face_images_from_db(employee_id, include_image_ids=False):
+    """Load all face images from employee_images table for employee"""
     face_images = []
+    image_ids = []
     
-    if not os.path.exists(folder_path):
-        print(f"⚠️ Folder does not exist: {folder_path}")
-        return face_images
+    conn = get_db_connection()
+    if conn is None:
+        return (face_images, image_ids) if include_image_ids else face_images
     
-    # Load all face images from folder
     try:
-        files = os.listdir(folder_path)
-        print(f"📁 Found {len(files)} files in {folder_path}")
-    except Exception as e:
-        print(f"⚠️ Error listing folder {folder_path}: {e}")
-        return face_images
-    
-    for filename in sorted(files):
-        if filename.startswith('face_') and filename.endswith('.jpg'):
-            image_path = os.path.join(folder_path, filename)
+        c = conn.cursor()
+        # Load all images for this employee from employee_images table
+        if DB_URL:
+            if include_image_ids:
+                c.execute("SELECT id, image FROM employee_images WHERE employee_id = %s ORDER BY id", (employee_id,))
+            else:
+                c.execute("SELECT image FROM employee_images WHERE employee_id = %s ORDER BY id", (employee_id,))
+        else:
+            if include_image_ids:
+                c.execute("SELECT id, image FROM employee_images WHERE employee_id = ? ORDER BY id", (employee_id,))
+            else:
+                c.execute("SELECT image FROM employee_images WHERE employee_id = ? ORDER BY id", (employee_id,))
+        
+        rows = c.fetchall()
+        
+        if DB_URL:
+            return_db_connection(conn)
+        else:
+            conn.close()
+        
+        if not rows:
+            return (face_images, image_ids) if include_image_ids else face_images
+        
+        # Decode each image from bytes
+        for idx, row in enumerate(rows):
+            if include_image_ids:
+                img_id = row[0] if DB_URL else row['id']
+                image_data = row[1] if DB_URL else row['image']
+            else:
+                image_data = row[0] if DB_URL else row['image']
+            
+            if image_data is None:
+                continue
+            
             try:
-                face_img = cv2.imread(image_path, cv2.IMREAD_GRAYSCALE)
+                # Convert to bytes if it's a memoryview (PostgreSQL BYTEA)
+                if isinstance(image_data, memoryview):
+                    image_data = image_data.tobytes()
+                elif not isinstance(image_data, bytes):
+                    image_data = bytes(image_data)
+                
+                # Convert bytes to numpy array
+                nparr = np.frombuffer(image_data, np.uint8)
+                face_img = cv2.imdecode(nparr, cv2.IMREAD_GRAYSCALE)
+                
                 if face_img is not None and face_img.size > 0:
                     # Ensure consistent size (200x200)
                     face_img = cv2.resize(face_img, (200, 200))
                     face_images.append(face_img)
-                    print(f"  ✅ Loaded {filename} ({face_img.shape})")
-                else:
-                    print(f"  ⚠️ Failed to load {filename} (image is None or empty)")
-            except Exception as e:
-                print(f"  ⚠️ Error loading {image_path}: {e}")
+                    if include_image_ids:
+                        image_ids.append(img_id)
+            except Exception:
+                pass
     
-    return face_images
+    except Exception:
+        if DB_URL:
+            return_db_connection(conn)
+        else:
+            conn.close()
+    
+    return (face_images, image_ids) if include_image_ids else face_images
 
 def train_recognizer():
-    """Train LBPH recognizer with all registered faces from folders"""
+    """Train LBPH recognizer with all registered faces from employee_images table in NeonDB"""
     global _lbph_recognizer, _employee_ids, _id_to_employee
     
     conn = get_db_connection()
     if conn is None:
-        print("⚠️ Cannot train: Database connection failed")
         return
     
     c = conn.cursor()
@@ -222,9 +275,9 @@ def train_recognizer():
         conn.close()
     
     if not rows:
-        print("⚠️ No employees found in database for training")
         _employee_ids = {}
         _id_to_employee = {}
+        _lbph_recognizer = None
         return
     
     faces = []
@@ -232,27 +285,27 @@ def train_recognizer():
     _employee_ids = {}
     _id_to_employee = {}
     
-    print(f"Found {len(rows)} employees in database, loading face images...")
-    
     for row in rows:
         emp_id = row[0] if DB_URL else row['id']
         name = row[1] if DB_URL else row['name']
         
-        # Load face images from folder
-        face_images = load_face_images_from_folder(emp_id)
+        # Load all face images from employee_images table for this employee
+        face_images = load_face_images_from_db(emp_id, include_image_ids=False)
         
         if not face_images:
-            print(f"⚠️ No face images found for employee {emp_id} ({name}) in folder {os.path.join(DATA_DIR, str(emp_id))}")
             continue
         
-        # Add all face images for this employee
+        # Add all face images for this employee to training data
         for face_img in face_images:
+            # Ensure image is grayscale and 200x200
+            if len(face_img.shape) == 3:
+                face_img = cv2.cvtColor(face_img, cv2.COLOR_BGR2GRAY)
+            face_img = cv2.resize(face_img, (200, 200))
             faces.append(face_img)
             labels.append(emp_id)
         
         _employee_ids[emp_id] = name
         _id_to_employee[name] = emp_id
-        print(f"✅ Loaded {len(face_images)} face images for {name} (ID: {emp_id})")
     
     if faces:
         # Create or reuse recognizer
@@ -263,11 +316,9 @@ def train_recognizer():
                 grid_x=LBPH_GRID_X,
                 grid_y=LBPH_GRID_Y
             )
+        
         _lbph_recognizer.train(faces, np.array(labels))
-        print(f"✅ LBPH trained with {len(faces)} face images from {len(_employee_ids)} employees")
-        print(f"✅ Employee IDs mapped: {_employee_ids}")
     else:
-        print("⚠️ No face images found for training - recognizer not trained")
         _lbph_recognizer = None
 
 # ---------------- Image Processing ----------------
@@ -280,8 +331,7 @@ def decode_image(base64_string):
         pil_image = PIL.Image.open(io.BytesIO(img_data))
         rgb_image = pil_image.convert("RGB")
         return np.array(rgb_image)
-    except Exception as e:
-        print(f"Image Decode Error: {e}")
+    except Exception:
         return None
 
 def detect_face(img_array):
@@ -349,14 +399,11 @@ def check_liveness(images):
         
         # Thresholds: Real faces have movement and eyes
         if avg_movement < 3.0:
-            print(f"Liveness check failed: Low movement ({avg_movement:.2f})")
             return False
         
         if not eyes_detected:
-            print("Liveness check failed: Eyes not detected")
             return False
         
-        print(f"Liveness check passed: Movement={avg_movement:.2f}, Eyes={eyes_detected}")
         return True
         
     except Exception as e:
@@ -498,7 +545,7 @@ def add_client():
 
 @app.route('/register', methods=['POST'])
 def register():
-    """Register a new employee and save face images to folder"""
+    """Register a new employee and save face images to employee_images table in NeonDB"""
     try:
         data = request.json
         name = data.get('name')
@@ -515,13 +562,19 @@ def register():
         # Detect and extract face
         face_gray, face_rect = detect_face(image)
         if face_gray is None:
-            return jsonify({"status": "error", "message": "No face detected. Please ensure your face is clearly visible"}), 400
+            return jsonify({"status": "error", "message": "Face not visible"}), 400
         
         # Check for eyes (liveness)
         if not detect_eyes(face_gray):
-            return jsonify({"status": "error", "message": "Eyes not detected. Please look directly at the camera"}), 400
+            return jsonify({"status": "error", "message": "Face not visible"}), 400
         
-        # Insert employee into database first to get ID
+        # Convert face image to JPEG bytes for database storage
+        # Ensure image is in correct format (grayscale, 200x200)
+        face_gray_resized = cv2.resize(face_gray, (200, 200))
+        _, img_buffer = cv2.imencode('.jpg', face_gray_resized)
+        image_bytes = img_buffer.tobytes()
+        
+        # Insert employee into database (without image - images stored in employee_images table)
         conn = get_db_connection()
         if conn is None:
             return jsonify({"status": "error", "message": "Database connection failed"}), 500
@@ -531,10 +584,16 @@ def register():
             c.execute("INSERT INTO employees (name, email) VALUES (%s, %s) RETURNING id",
                       (name, email))
             employee_id = c.fetchone()[0]
+            # Insert image into employee_images table
+            c.execute("INSERT INTO employee_images (employee_id, image) VALUES (%s, %s)",
+                      (employee_id, psycopg2.Binary(image_bytes)))
         else:
             c.execute("INSERT INTO employees (name, email) VALUES (?, ?)",
                       (name, email))
             employee_id = c.lastrowid
+            # Insert image into employee_images table
+            c.execute("INSERT INTO employee_images (employee_id, image) VALUES (?, ?)",
+                      (employee_id, sqlite3.Binary(image_bytes)))
         
         conn.commit()
         if DB_URL:
@@ -542,13 +601,15 @@ def register():
         else:
             conn.close()
         
-        # Save face image to folder
-        save_face_image(employee_id, face_gray, image_index=0)
+        # Retrain recognizer in background to speed up registration
+        import threading
+        threading.Thread(target=train_recognizer, daemon=True).start()
         
-        # Retrain recognizer with new face
-        train_recognizer()
-        
-        return jsonify({"status": "success", "message": f"Registered {name}!"})
+        return jsonify({
+            "status": "success", 
+            "message": f"Successfully registered {name}.",
+            "employee_id": employee_id
+        })
     except Exception as e:
         print(f"REGISTER ERROR: {e}")
         return jsonify({"status": "error", "message": str(e)}), 500
@@ -570,13 +631,212 @@ def train():
         traceback.print_exc()
         return jsonify({"status": "error", "message": str(e)}), 500
 
+@app.route('/api/fix-image-association', methods=['POST'])
+def fix_image_association():
+    """Fix incorrect image-to-employee associations"""
+    try:
+        data = request.json
+        image_id = data.get('image_id')
+        correct_employee_id = data.get('correct_employee_id')
+        
+        if not image_id or not correct_employee_id:
+            return jsonify({"status": "error", "message": "Missing image_id or correct_employee_id"}), 400
+        
+        conn = get_db_connection()
+        if conn is None:
+            return jsonify({"status": "error", "message": "Database connection failed"}), 500
+        
+        c = conn.cursor()
+        
+        # Get current association
+        if DB_URL:
+            c.execute("SELECT employee_id FROM employee_images WHERE id = %s", (image_id,))
+        else:
+            c.execute("SELECT employee_id FROM employee_images WHERE id = ?", (image_id,))
+        
+        row = c.fetchone()
+        if not row:
+            if DB_URL:
+                return_db_connection(conn)
+            else:
+                conn.close()
+            return jsonify({"status": "error", "message": "Image not found"}), 404
+        
+        old_employee_id = row[0] if DB_URL else row['employee_id']
+        
+        # Update association
+        if DB_URL:
+            c.execute("UPDATE employee_images SET employee_id = %s WHERE id = %s", (correct_employee_id, image_id))
+        else:
+            c.execute("UPDATE employee_images SET employee_id = ? WHERE id = ?", (correct_employee_id, image_id))
+        
+        conn.commit()
+        
+        if DB_URL:
+            return_db_connection(conn)
+        else:
+            conn.close()
+        
+        # Retrain recognizer with corrected associations
+        train_recognizer()
+        
+        return jsonify({
+            "status": "success",
+            "message": f"Image {image_id} reassociated from employee {old_employee_id} to {correct_employee_id}",
+            "image_id": image_id,
+            "old_employee_id": old_employee_id,
+            "new_employee_id": correct_employee_id
+        })
+    except Exception as e:
+        print(f"FIX ASSOCIATION ERROR: {e}")
+        import traceback
+        traceback.print_exc()
+        return jsonify({"status": "error", "message": str(e)}), 500
+
+@app.route('/api/debug/employee-images', methods=['GET'])
+def debug_employee_images():
+    """Debug endpoint to check employee images in database"""
+    try:
+        conn = get_db_connection()
+        if conn is None:
+            return jsonify({"status": "error", "message": "Database connection failed"}), 500
+        
+        c = conn.cursor()
+        
+        # Get all employees with their image counts and image IDs
+        if DB_URL:
+            c.execute("""
+                SELECT e.id, e.name, 
+                       COUNT(ei.id) as image_count,
+                       ARRAY_AGG(ei.id ORDER BY ei.id) as image_ids
+                FROM employees e 
+                LEFT JOIN employee_images ei ON e.id = ei.employee_id 
+                GROUP BY e.id, e.name 
+                ORDER BY e.id
+            """)
+        else:
+            c.execute("""
+                SELECT e.id, e.name, 
+                       COUNT(ei.id) as image_count,
+                       GROUP_CONCAT(ei.id) as image_ids
+                FROM employees e 
+                LEFT JOIN employee_images ei ON e.id = ei.employee_id 
+                GROUP BY e.id, e.name 
+                ORDER BY e.id
+            """)
+        
+        rows = c.fetchall()
+        
+        employees = []
+        for row in rows:
+            if DB_URL:
+                emp_id, name, img_count = row[0], row[1], row[2]
+                image_ids = row[3] if len(row) > 3 else []
+            else:
+                emp_id, name, img_count = row['id'], row['name'], row['image_count']
+                image_ids_str = row.get('image_ids', '')
+                image_ids = [int(x) for x in image_ids_str.split(',')] if image_ids_str else []
+            
+            employees.append({
+                "id": emp_id,
+                "name": name,
+                "image_count": img_count,
+                "image_ids": image_ids if isinstance(image_ids, list) else list(image_ids) if image_ids else []
+            })
+        
+        # Also get detailed image-to-employee mapping
+        if DB_URL:
+            c.execute("""
+                SELECT ei.id as image_id, ei.employee_id, e.name as employee_name, ei.created_at
+                FROM employee_images ei
+                JOIN employees e ON ei.employee_id = e.id
+                ORDER BY ei.employee_id, ei.id
+            """)
+        else:
+            c.execute("""
+                SELECT ei.id as image_id, ei.employee_id, e.name as employee_name, ei.created_at
+                FROM employee_images ei
+                JOIN employees e ON ei.employee_id = e.id
+                ORDER BY ei.employee_id, ei.id
+            """)
+        
+        image_details = []
+        detail_rows = c.fetchall()
+        for detail_row in detail_rows:
+            if DB_URL:
+                img_id, emp_id, emp_name, created_at = detail_row[0], detail_row[1], detail_row[2], detail_row[3]
+            else:
+                img_id, emp_id, emp_name, created_at = detail_row['image_id'], detail_row['employee_id'], detail_row['employee_name'], detail_row['created_at']
+            image_details.append({
+                "image_id": img_id,
+                "employee_id": emp_id,
+                "employee_name": emp_name,
+                "created_at": str(created_at) if created_at else None
+            })
+        
+        if DB_URL:
+            return_db_connection(conn)
+        else:
+            conn.close()
+        
+        # Check for potential issues
+        issues = []
+        for emp in employees:
+            if emp['image_count'] == 0:
+                issues.append(f"Employee {emp['id']} ({emp['name']}) has no images")
+        
+        return jsonify({
+            "status": "success",
+            "employees": employees,
+            "image_details": image_details,
+            "total_employees": len(employees),
+            "total_images": sum(emp['image_count'] for emp in employees),
+            "recognizer_trained": _lbph_recognizer is not None,
+            "trained_employee_ids": list(_employee_ids.keys()) if _employee_ids else [],
+            "trained_employee_names": list(_employee_ids.values()) if _employee_ids else [],
+            "issues": issues,
+            "instructions": "If recognition is wrong, check image_details to see which images belong to which employee_id. Use /api/fix-image-association to correct wrong associations."
+        })
+    except Exception as e:
+        print(f"DEBUG ERROR: {e}")
+        import traceback
+        traceback.print_exc()
+        return jsonify({"status": "error", "message": str(e)}), 500
+
 @app.route('/api/status', methods=['GET'])
 def status():
     """Check recognizer status"""
+    # Check database for actual employee and image counts
+    conn = get_db_connection()
+    db_employee_count = 0
+    db_image_count = 0
+    if conn:
+        try:
+            c = conn.cursor()
+            if DB_URL:
+                c.execute("SELECT COUNT(*) FROM employees")
+                db_employee_count = c.fetchone()[0]
+                c.execute("SELECT COUNT(*) FROM employee_images")
+                db_image_count = c.fetchone()[0]
+            else:
+                c.execute("SELECT COUNT(*) FROM employees")
+                db_employee_count = c.fetchone()[0]
+                c.execute("SELECT COUNT(*) FROM employee_images")
+                db_image_count = c.fetchone()[0]
+        except Exception as e:
+            print(f"Error checking database status: {e}")
+        finally:
+            if DB_URL:
+                return_db_connection(conn)
+            else:
+                conn.close()
+    
     return jsonify({
         "recognizer_initialized": _lbph_recognizer is not None,
         "employee_count": len(_employee_ids),
         "employee_ids": _employee_ids,
+        "db_employee_count": db_employee_count,
+        "db_image_count": db_image_count,
         "data_dir": DATA_DIR,
         "data_dir_exists": os.path.exists(DATA_DIR)
     })
@@ -613,14 +873,18 @@ def scan():
         face_gray, face_rect = detect_face(image)
         
         if face_gray is None:
-            return jsonify({"status": "error", "message": "No face detected. Please ensure your face is clearly visible"}), 400
+            return jsonify({"status": "error", "message": "Face not visible"}), 400
+        
+        # Ensure face is exactly 200x200 grayscale (same as training)
+        # detect_face already resizes to 200x200, but ensure it's grayscale
+        if len(face_gray.shape) == 3:
+            face_gray = cv2.cvtColor(face_gray, cv2.COLOR_BGR2GRAY)
+        face_gray = cv2.resize(face_gray, (200, 200))
         
         # Recognize face using LBPH
         recognizer = get_lbph_recognizer()
         
         if recognizer is None or len(_employee_ids) == 0:
-            print(f"⚠️ Recognition failed: recognizer={recognizer is not None}, employee_ids={len(_employee_ids)}")
-            # Try retraining
             train_recognizer()
             recognizer = get_lbph_recognizer()
             if recognizer is None or len(_employee_ids) == 0:
@@ -630,11 +894,11 @@ def scan():
         
         # LBPH: Lower confidence = better match (0 = perfect match)
         if confidence > LBPH_THRESHOLD:
-            return jsonify({"status": "error", "message": "Face not recognized. Please register first"}), 401
+            return jsonify({"status": "error", "message": "Face not visible. Please ensure your face is clearly visible."}), 401
         
         name = _employee_ids.get(label_id)
         if not name:
-            return jsonify({"status": "error", "message": "Employee not found"}), 401
+            return jsonify({"status": "error", "message": "Face not visible. Please ensure your face is clearly visible."}), 401
         
         # Log attendance - use IST timezone
         _ist_timezone = pytz.timezone('Asia/Kolkata')
@@ -646,9 +910,12 @@ def scan():
         c = conn.cursor()
         last_type = get_last_log_type(name, conn)
         
+        # Format time nicely
+        time_str = now_ist.strftime("%I:%M %p")
+        
         if last_type == "LOGIN":
             new_type = "LOGOUT"
-            message = f"Goodbye, {name}!"
+            message = f"Goodbye, {time_str}"
         elif last_type == "LOGOUT":
             if DB_URL:
                 return_db_connection(conn)
@@ -656,11 +923,11 @@ def scan():
                 conn.close()
             return jsonify({
                 "status": "error",
-                "message": "Today's attendance is already marked for this employee",
+                "message": "You have logged out",
             }), 400
         else:
             new_type = "LOGIN"
-            message = f"Welcome, {name}!"
+            message = f"Welcome, {time_str}"
         
         # Store timestamp - for PostgreSQL, store as UTC then convert on retrieval
         # For SQLite, store as naive IST datetime
@@ -687,15 +954,11 @@ def scan():
             conn.commit()
             conn.close()
         
-        # Convert confidence to similarity score (0-100, higher = better)
-        similarity = max(0, 100 - confidence)
-        
         return jsonify({
             "status": "success",
             "name": name,
             "type": new_type,
-            "message": message,
-            "similarity": float(similarity)
+            "message": message
         })
     except Exception as e:
         print(f"SCAN ERROR: {e}")
@@ -861,13 +1124,12 @@ def send_monthly_reports():
 
         subject = f"Monthly Attendance Report: {now.strftime('%B %Y')}"
         html_content = f"""
-        <h3>Hello {emp_name},</h3>
+        <h3>Dear {emp_name},</h3>
         <p>Here is your attendance summary for <b>{now.strftime('%B')}</b>:</p>
         <h2>Total Hours: {total_hours} hrs</h2>
-        <p>If you have any queries, please contact Admin before the 30th.</p>
-        <p>Regards,<br>Office Admin</p>
+        <p>If you have any queries, please contact before the 30th.</p>
+        <p>Regards,<br>Office</p>
         """
-
         send_custom_email(emp_email, subject, html_content)
         emails_sent += 1
 
@@ -876,7 +1138,6 @@ def send_monthly_reports():
     else:
         conn.close()
     
-    print(f"Monthly reports sent to {emails_sent} employees at {now.strftime('%Y-%m-%d %H:%M:%S IST')}")
     return f"Report sent to {emails_sent} employees."
 
 @app.route('/run-monthly-reports', methods=['GET'])
@@ -887,38 +1148,12 @@ def run_monthly_reports():
     
     if secret != expected_secret:
         return "Unauthorized", 401
-    
     result = send_monthly_reports()
     return result
-
-# ---------------- Scheduler ----------------
-scheduler = None
-_ist_timezone = pytz.timezone('Asia/Kolkata')
-
-def setup_scheduler():
-    global scheduler
-    scheduler = BackgroundScheduler(timezone=_ist_timezone)
-    scheduler.add_job(
-        func=send_monthly_reports,
-        trigger=CronTrigger(day=25, hour=17, minute=0),
-        id='monthly_reports',
-        name='Send monthly attendance reports',
-        replace_existing=True
-    )
-    scheduler.start()
-    print("✅ Scheduler started: Monthly reports will be sent on 25th of every month at 5:00 PM IST")
-
-# Start scheduler only in main process
-if os.environ.get('WERKZEUG_RUN_MAIN') == 'true' or __name__ == '__main__':
-    setup_scheduler()
-
+    
 # ---------------- Run App ----------------
 if __name__ == '__main__':
     # Initialize LBPH recognizer
-    print("🚀 Starting application...")
-    print(f"📁 Data directory: {os.path.abspath(DATA_DIR)}")
-    print(f"📁 Data directory exists: {os.path.exists(DATA_DIR)}")
     get_lbph_recognizer()
-    print(f"✅ Recognizer initialized. Employee IDs: {_employee_ids}")
     port = int(os.environ.get('PORT', 5000))
     app.run(host='0.0.0.0', port=port, debug=False)

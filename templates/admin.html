@@ -318,10 +318,18 @@
             });
             const data = await res.json();
             if (data.status === 'success') {
-                regStatus.innerText = "Success!";
-                setTimeout(() => toggleEmployeeForm(), 1000);
+                regStatus.innerText = data.message || `✅ ${data.name || 'Employee'} registered successfully!`;
+                regStatus.className = "text-sm font-semibold h-auto text-green-600";
+                document.getElementById('reg-name').value = '';
+                document.getElementById('reg-email').value = '';
+                setTimeout(() => {
+                    toggleEmployeeForm();
+                    regStatus.innerText = '';
+                    regStatus.className = "text-sm font-semibold h-5 text-gray-600";
+                }, 3000);
             } else {
-                regStatus.innerText = "Error: " + data.message;
+                regStatus.innerText = "❌ Error: " + (data.message || "Registration failed");
+                regStatus.className = "text-sm font-semibold h-auto text-red-600";
             }
         } catch (e) {
             regStatus.innerText = "Server Error";
