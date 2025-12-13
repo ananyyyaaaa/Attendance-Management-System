@@ -10,14 +10,16 @@ import pytz
 import requests
 import PIL.Image
 import cv2
-from flask import Flask, request, jsonify, render_template
+from flask import Flask, request, jsonify, render_template, session, redirect, url_for
 from flask_cors import CORS
 from dotenv import load_dotenv
 from apscheduler.schedulers.background import BackgroundScheduler
 from apscheduler.triggers.cron import CronTrigger
+from functools import wraps
 
 load_dotenv()
 app = Flask(__name__)
+app.secret_key = os.environ.get('SECRET_KEY', 'your-secret-key-change-in-production')
 CORS(app)
 
 DB_URL = os.environ.get('DATABASE_URL')
@@ -141,9 +143,17 @@ def init_db():
     if DB_URL:
         c.execute('''CREATE TABLE IF NOT EXISTS clients
                      (id SERIAL PRIMARY KEY, name TEXT, start_date TEXT, end_date TEXT, cost TEXT)''')
+        c.execute('''CREATE TABLE IF NOT EXISTS leave_requests
+                     (id SERIAL PRIMARY KEY, employee_id INTEGER REFERENCES employees(id) ON DELETE CASCADE,
+                      employee_name TEXT, start_date DATE, end_date DATE, reason TEXT,
+                      status TEXT DEFAULT 'pending', created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP)''')
     else:
         c.execute('''CREATE TABLE IF NOT EXISTS clients
                      (id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT, start_date TEXT, end_date TEXT, cost TEXT)''')
+        c.execute('''CREATE TABLE IF NOT EXISTS leave_requests
+                     (id INTEGER PRIMARY KEY AUTOINCREMENT, employee_id INTEGER REFERENCES employees(id) ON DELETE CASCADE,
+                      employee_name TEXT, start_date DATE, end_date DATE, reason TEXT,
+                      status TEXT DEFAULT 'pending', created_at DATETIME DEFAULT CURRENT_TIMESTAMP)''')
     conn.commit()
     conn.close()
 
@@ -456,8 +466,88 @@ def get_last_log_type(name, conn=None):
 
     return row[0] if DB_URL else row["type"]
 
+# ---------------- Authentication Helpers ----------------
+def login_required(f):
+    @wraps(f)
+    def decorated_function(*args, **kwargs):
+        if 'employee_name' not in session:
+            return redirect(url_for('login'))
+        return f(*args, **kwargs)
+    return decorated_function
+
 # ---------------- Routes ----------------
+@app.route('/login', methods=['GET', 'POST'])
+def login():
+    if request.method == 'POST':
+        try:
+            data = request.json or {}
+            username = data.get('username', '').strip().lower()
+            password = data.get('password', '').strip().lower()
+            
+            if not username or not password:
+                return jsonify({"status": "error", "message": "Username and password required"}), 400
+            
+            # Expected password format: "password" + username
+            expected_password = f"password{username}"
+            
+            if password != expected_password:
+                return jsonify({"status": "error", "message": "Invalid credentials"}), 401
+            
+            # Check if employee exists
+            conn = get_db_connection()
+            if conn is None:
+                return jsonify({"status": "error", "message": "Database connection failed"}), 500
+            
+            c = conn.cursor()
+            if DB_URL:
+                c.execute("SELECT id, name FROM employees WHERE LOWER(name) = %s", (username,))
+            else:
+                c.execute("SELECT id, name FROM employees WHERE LOWER(name) = ?", (username,))
+            
+            row = c.fetchone()
+            
+            if DB_URL:
+                return_db_connection(conn)
+            else:
+                conn.close()
+            
+            if not row:
+                return jsonify({"status": "error", "message": "Invalid credentials"}), 401
+            
+            # Login successful - store in session
+            employee_id = row[0] if DB_URL else row['id']
+            employee_name = row[1] if DB_URL else row['name']
+            session['employee_id'] = employee_id
+            session['employee_name'] = employee_name
+            
+            return jsonify({
+                "status": "success",
+                "message": "Login successful",
+                "employee_name": employee_name
+            })
+        except Exception as e:
+            print(f"LOGIN ERROR: {e}")
+            return jsonify({"status": "error", "message": str(e)}), 500
+    
+    return render_template('login.html')
+
+@app.route('/logout', methods=['POST'])
+@login_required
+def logout():
+    session.clear()
+    return jsonify({"status": "success", "message": "Logged out successfully"})
+
+@app.route('/api/current-user', methods=['GET'])
+@login_required
+def get_current_user():
+    return jsonify({
+        "status": "success",
+        "employee_name": session.get('employee_name'),
+        "employee_id": session.get('employee_id')
+    })
+
 @app.route('/')
+@login_required
 def home():
     return render_template('index.html')
 
@@ -503,6 +593,106 @@ def get_clients():
         })
 
     return jsonify(clients)
+
+@app.route('/api/admin/leave-requests', methods=['GET'])
+def get_all_leave_requests():
+    """Get all leave requests for admin"""
+    try:
+        conn = get_db_connection()
+        if conn is None:
+            return jsonify({"status": "error", "message": "Database connection failed"}), 500
+        
+        c = conn.cursor()
+        
+        if DB_URL:
+            c.execute("""
+                SELECT id, employee_id, employee_name, start_date, end_date, reason, status, created_at
+                FROM leave_requests
+                ORDER BY created_at DESC
+            """)
+        else:
+            c.execute("""
+                SELECT id, employee_id, employee_name, start_date, end_date, reason, status, created_at
+                FROM leave_requests
+                ORDER BY created_at DESC
+            """)
+        
+        rows = c.fetchall()
+        
+        if DB_URL:
+            return_db_connection(conn)
+        else:
+            conn.close()
+        
+        requests = []
+        for row in rows:
+            if DB_URL:
+                req_id, emp_id, emp_name, start_date, end_date, reason, status, created_at = row
+            else:
+                req_id, emp_id, emp_name, start_date, end_date, reason, status, created_at = row['id'], row['employee_id'], row['employee_name'], row['start_date'], row['end_date'], row['reason'], row['status'], row['created_at']
+            
+            requests.append({
+                'id': req_id,
+                'employee_id': emp_id,
+                'employee_name': emp_name,
+                'start_date': str(start_date) if start_date else None,
+                'end_date': str(end_date) if end_date else None,
+                'reason': reason,
+                'status': status,
+                'created_at': str(created_at) if created_at else None
+            })
+        
+        return jsonify({
+            "status": "success",
+            "requests": requests
+        })
+    except Exception as e:
+        print(f"GET ALL LEAVE REQUESTS ERROR: {e}")
+        return jsonify({"status": "error", "message": str(e)}), 500
+
+@app.route('/api/admin/leave-request/<int:request_id>', methods=['PUT'])
+def update_leave_request_status(request_id):
+    """Update leave request status (approve/reject)"""
+    try:
+        data = request.json or {}
+        status = data.get('status')  # 'approved' or 'rejected'
+        
+        if status not in ['approved', 'rejected']:
+            return jsonify({"status": "error", "message": "Invalid status. Must be 'approved' or 'rejected'"}), 400
+        
+        conn = get_db_connection()
+        if conn is None:
+            return jsonify({"status": "error", "message": "Database connection failed"}), 500
+        
+        c = conn.cursor()
+        
+        if DB_URL:
+            c.execute("""
+                UPDATE leave_requests
+                SET status = %s
+                WHERE id = %s
+            """, (status, request_id))
+        else:
+            c.execute("""
+                UPDATE leave_requests
+                SET status = ?
+                WHERE id = ?
+            """, (status, request_id))
+        
+        conn.commit()
+        
+        if DB_URL:
+            return_db_connection(conn)
+        else:
+            conn.close()
+        
+        return jsonify({
+            "status": "success",
+            "message": f"Leave request {status} successfully"
+        })
+    except Exception as e:
+        print(f"UPDATE LEAVE REQUEST ERROR: {e}")
+        return jsonify({"status": "error", "message": str(e)}), 500
 
 @app.route('/api/clients/add', methods=['POST'])
 def add_client():
@@ -842,6 +1032,7 @@ def status():
     })
 
 @app.route('/scan', methods=['POST'])
+@login_required
 def scan():
     """Scan face and log attendance using LBPH recognizer"""
     try:
@@ -1020,6 +1211,431 @@ def report():
         })
 
     return jsonify(data)
+
+@app.route('/api/employees', methods=['GET'])
+def get_employees():
+    """Return list of all employees"""
+    try:
+        conn = get_db_connection()
+        if conn is None:
+            return jsonify({"status": "error", "message": "Database connection failed"}), 500
+        
+        c = conn.cursor()
+        c.execute("SELECT id, name, email FROM employees ORDER BY name")
+        rows = c.fetchall()
+        
+        if DB_URL:
+            return_db_connection(conn)
+        else:
+            conn.close()
+        
+        employees = []
+        for row in rows:
+            emp_id = row[0] if DB_URL else row['id']
+            name = row[1] if DB_URL else row['name']
+            email = row[2] if DB_URL else row['email']
+            employees.append({
+                'id': emp_id,
+                'name': name,
+                'email': email
+            })
+        
+        return jsonify({
+            "status": "success",
+            "employees": employees
+        })
+    except Exception as e:
+        print(f"GET EMPLOYEES ERROR: {e}")
+        return jsonify({"status": "error", "message": str(e)}), 500
+
+@app.route('/api/leave-request', methods=['POST'])
+@login_required
+def submit_leave_request():
+    """Submit a leave request"""
+    try:
+        data = request.json or {}
+        start_date = data.get('start_date')
+        end_date = data.get('end_date')
+        reason = data.get('reason', '').strip()
+        
+        if not start_date or not end_date:
+            return jsonify({"status": "error", "message": "Start date and end date required"}), 400
+        
+        employee_id = session.get('employee_id')
+        employee_name = session.get('employee_name')
+        
+        if not employee_id or not employee_name:
+            return jsonify({"status": "error", "message": "Not authenticated"}), 401
+        
+        conn = get_db_connection()
+        if conn is None:
+            return jsonify({"status": "error", "message": "Database connection failed"}), 500
+        
+        c = conn.cursor()
+        
+        if DB_URL:
+            c.execute("""
+                INSERT INTO leave_requests (employee_id, employee_name, start_date, end_date, reason, status)
+                VALUES (%s, %s, %s, %s, %s, 'pending')
+            """, (employee_id, employee_name, start_date, end_date, reason))
+        else:
+            c.execute("""
+                INSERT INTO leave_requests (employee_id, employee_name, start_date, end_date, reason, status)
+                VALUES (?, ?, ?, ?, ?, 'pending')
+            """, (employee_id, employee_name, start_date, end_date, reason))
+        
+        conn.commit()
+        
+        if DB_URL:
+            return_db_connection(conn)
+        else:
+            conn.close()
+        
+        return jsonify({
+            "status": "success",
+            "message": "Leave request submitted successfully"
+        })
+    except Exception as e:
+        print(f"LEAVE REQUEST ERROR: {e}")
+        import traceback
+        traceback.print_exc()
+        return jsonify({"status": "error", "message": str(e)}), 500
+
+@app.route('/api/my-leave-requests', methods=['GET'])
+@login_required
+def get_my_leave_requests():
+    """Get leave requests for the logged-in employee"""
+    try:
+        employee_id = session.get('employee_id')
+        if not employee_id:
+            return jsonify({"status": "error", "message": "Not authenticated"}), 401
+        
+        conn = get_db_connection()
+        if conn is None:
+            return jsonify({"status": "error", "message": "Database connection failed"}), 500
+        
+        c = conn.cursor()
+        
+        if DB_URL:
+            c.execute("""
+                SELECT id, start_date, end_date, reason, status, created_at
+                FROM leave_requests
+                WHERE employee_id = %s
+                ORDER BY created_at DESC
+            """, (employee_id,))
+        else:
+            c.execute("""
+                SELECT id, start_date, end_date, reason, status, created_at
+                FROM leave_requests
+                WHERE employee_id = ?
+                ORDER BY created_at DESC
+            """, (employee_id,))
+        
+        rows = c.fetchall()
+        
+        if DB_URL:
+            return_db_connection(conn)
+        else:
+            conn.close()
+        
+        requests = []
+        for row in rows:
+            if DB_URL:
+                req_id, start_date, end_date, reason, status, created_at = row
+            else:
+                req_id, start_date, end_date, reason, status, created_at = row['id'], row['start_date'], row['end_date'], row['reason'], row['status'], row['created_at']
+            
+            requests.append({
+                'id': req_id,
+                'start_date': str(start_date) if start_date else None,
+                'end_date': str(end_date) if end_date else None,
+                'reason': reason,
+                'status': status,
+                'created_at': str(created_at) if created_at else None
+            })
+        
+        return jsonify({
+            "status": "success",
+            "requests": requests
+        })
+    except Exception as e:
+        print(f"GET LEAVE REQUESTS ERROR: {e}")
+        return jsonify({"status": "error", "message": str(e)}), 500
+
+@app.route('/api/user-attendance', methods=['GET'])
+@login_required
+def user_attendance():
+    """Return daily attendance data for the logged-in user and month"""
+    try:
+        # Get name from session instead of parameter
+        name = session.get('employee_name')
+        month = request.args.get('month')  # Format: YYYY-MM
+        year = request.args.get('year')
+        
+        if not name:
+            return jsonify({"status": "error", "message": "Not authenticated"}), 401
+        
+        _ist_timezone = pytz.timezone('Asia/Kolkata')
+        _utc_timezone = pytz.UTC
+        
+        # Determine the month and year
+        if month and year:
+            try:
+                target_date = datetime.datetime(int(year), int(month), 1)
+            except:
+                return jsonify({"status": "error", "message": "Invalid month/year"}), 400
+        else:
+            # Default to current month
+            target_date = datetime.datetime.now(_ist_timezone).replace(day=1, hour=0, minute=0, second=0, microsecond=0)
+        
+        # Get start and end of month in IST
+        start_of_month = target_date.replace(day=1, hour=0, minute=0, second=0, microsecond=0)
+        if start_of_month.month == 12:
+            end_of_month = start_of_month.replace(year=start_of_month.year + 1, month=1) - datetime.timedelta(days=1)
+        else:
+            end_of_month = start_of_month.replace(month=start_of_month.month + 1) - datetime.timedelta(days=1)
+        end_of_month = end_of_month.replace(hour=23, minute=59, second=59, microsecond=999999)
+        
+        # Get logs from a few days before month start to catch cross-month sessions
+        # (e.g., if someone logged in on last day of previous month and logged out on first day of current month)
+        query_start = start_of_month - datetime.timedelta(days=3)
+        
+        conn = get_db_connection()
+        if conn is None:
+            return jsonify({"status": "error", "message": "Database connection failed"}), 500
+        
+        c = conn.cursor()
+        
+        # Get all logs for this user in this month (plus a few days before to catch cross-month sessions)
+        if DB_URL:
+            # PostgreSQL: Convert UTC to IST for date comparison
+            query_start_str = query_start.strftime('%Y-%m-%d')
+            end_str = end_of_month.strftime('%Y-%m-%d')
+            c.execute("""
+                SELECT timestamp, type 
+                FROM logs 
+                WHERE name = %s 
+                AND DATE(timestamp AT TIME ZONE 'UTC' AT TIME ZONE 'Asia/Kolkata') >= %s
+                AND DATE(timestamp AT TIME ZONE 'UTC' AT TIME ZONE 'Asia/Kolkata') <= %s
+                ORDER BY timestamp ASC
+            """, (name, query_start_str, end_str))
+        else:
+            # SQLite: Direct date comparison
+            query_start_str = query_start.strftime('%Y-%m-%d')
+            end_str = end_of_month.strftime('%Y-%m-%d')
+            c.execute("""
+                SELECT timestamp, type 
+                FROM logs 
+                WHERE name = ? 
+                AND DATE(timestamp) >= ?
+                AND DATE(timestamp) <= ?
+                ORDER BY timestamp ASC
+            """, (name, query_start_str, end_str))
+        
+        rows = c.fetchall()
+        
+        # Get approved leave dates for this employee in this month
+        employee_id = session.get('employee_id')
+        approved_leaves = set()
+        paid_leave_dates = set()  # First approved leave day (paid)
+        unpaid_leave_dates = set()  # Additional approved leave days (unpaid)
+        
+        if employee_id:
+            if DB_URL:
+                c.execute("""
+                    SELECT start_date, end_date
+                    FROM leave_requests
+                    WHERE employee_id = %s
+                    AND status = 'approved'
+                    AND start_date <= %s
+                    AND end_date >= %s
+                    ORDER BY start_date ASC
+                """, (employee_id, end_of_month.date(), start_of_month.date()))
+            else:
+                c.execute("""
+                    SELECT start_date, end_date
+                    FROM leave_requests
+                    WHERE employee_id = ?
+                    AND status = 'approved'
+                    AND start_date <= ?
+                    AND end_date >= ?
+                    ORDER BY start_date ASC
+                """, (employee_id, end_of_month.date(), start_of_month.date()))
+            
+            leave_rows = c.fetchall()
+            all_leave_dates = []
+            
+            for leave_row in leave_rows:
+                if DB_URL:
+                    leave_start = leave_row[0]
+                    leave_end = leave_row[1]
+                else:
+                    leave_start = leave_row['start_date']
+                    leave_end = leave_row['end_date']
+                
+                # Convert to date objects if needed
+                if isinstance(leave_start, str):
+                    leave_start = datetime.datetime.strptime(leave_start, '%Y-%m-%d').date()
+                if isinstance(leave_end, str):
+                    leave_end = datetime.datetime.strptime(leave_end, '%Y-%m-%d').date()
+                
+                # Add all dates in the leave range
+                current_leave_date = leave_start
+                while current_leave_date <= leave_end:
+                    if start_of_month.date() <= current_leave_date <= end_of_month.date():
+                        date_str = current_leave_date.strftime('%Y-%m-%d')
+                        all_leave_dates.append(date_str)
+                        approved_leaves.add(date_str)
+                    current_leave_date += datetime.timedelta(days=1)
+            
+            # Sort and separate: first day is paid leave, rest are unpaid
+            all_leave_dates.sort()
+            if len(all_leave_dates) > 0:
+                paid_leave_dates.add(all_leave_dates[0])  # First approved leave day is paid
+                for date_str in all_leave_dates[1:]:
+                    unpaid_leave_dates.add(date_str)  # Additional days are unpaid
+        
+        if DB_URL:
+            return_db_connection(conn)
+        else:
+            conn.close()
+        
+        # Process logs to calculate daily hours
+        daily_data = {}  # {date: {'hours': float, 'minutes': int, 'has_logs': bool}}
+        
+        # Initialize all days in the month
+        current_date = start_of_month
+        while current_date <= end_of_month:
+            date_str = current_date.strftime('%Y-%m-%d')
+            daily_data[date_str] = {'hours': 0, 'minutes': 0, 'has_logs': False}
+            current_date += datetime.timedelta(days=1)
+        
+        # Process logs
+        last_login = None
+        for row in rows:
+            t = row[0] if DB_URL else row['timestamp']
+            log_type = row[1] if DB_URL else row['type']
+            
+            # Parse and convert timestamp to IST
+            if isinstance(t, str):
+                try:
+                    t_obj = datetime.datetime.strptime(t.split(".")[0], "%Y-%m-%d %H:%M:%S")
+                except:
+                    continue
+            else:
+                t_obj = t
+            
+            # Convert to IST
+            if isinstance(t_obj, datetime.datetime) and t_obj.tzinfo is None:
+                if DB_URL:
+                    t_obj = _utc_timezone.localize(t_obj).astimezone(_ist_timezone)
+                else:
+                    t_obj = _ist_timezone.localize(t_obj)
+            elif isinstance(t_obj, datetime.datetime) and t_obj.tzinfo:
+                t_obj = t_obj.astimezone(_ist_timezone)
+            
+            date_str = t_obj.strftime('%Y-%m-%d')
+            
+            if date_str not in daily_data:
+                continue
+            
+            daily_data[date_str]['has_logs'] = True
+            
+            if log_type == 'LOGIN':
+                last_login = t_obj
+            elif log_type == 'LOGOUT' and last_login:
+                # Calculate duration
+                duration = t_obj - last_login
+                total_seconds = duration.total_seconds()
+                
+                # Attribute hours to the login date, not logout date
+                login_date_str = last_login.strftime('%Y-%m-%d')
+                
+                # If login date is in the current month, add hours to that date
+                if login_date_str in daily_data:
+                    existing_seconds = daily_data[login_date_str]['hours'] * 3600 + daily_data[login_date_str]['minutes'] * 60
+                    total_seconds += existing_seconds
+                    
+                    hours = int(total_seconds // 3600)
+                    minutes = int((total_seconds % 3600) // 60)
+                    
+                    daily_data[login_date_str]['hours'] = hours
+                    daily_data[login_date_str]['minutes'] = minutes
+                    daily_data[login_date_str]['has_logs'] = True
+                
+                # Also mark logout date as having logs
+                daily_data[date_str]['has_logs'] = True
+                last_login = None
+        
+        # Calculate monthly totals and expected hours
+        total_calculated_minutes = 0
+        total_expected_days = 0
+        
+        # Convert to list format with status indicators
+        result = []
+        for date_str in sorted(daily_data.keys()):
+            # Parse date to check if it's Sunday
+            date_obj = datetime.datetime.strptime(date_str, '%Y-%m-%d')
+            is_sunday = date_obj.weekday() == 6  # 6 = Sunday
+            is_approved_leave = date_str in approved_leaves
+            is_paid_leave = date_str in paid_leave_dates
+            is_unpaid_leave = date_str in unpaid_leave_dates
+            
+            data = daily_data[date_str]
+            total_minutes = data['hours'] * 60 + data['minutes']
+            target_minutes = 7 * 60 + 40  # 7 hours 40 minutes
+            
+            # Count expected working days (exclude Sundays and paid leave only)
+            # Unpaid leave days still count as expected working days
+            if not is_sunday and not is_paid_leave:
+                total_expected_days += 1
+            
+            # Add to total calculated minutes
+            total_calculated_minutes += total_minutes
+            
+            # Determine status - both paid and unpaid leave are blue
+            if is_paid_leave or is_unpaid_leave:
+                status = 'blue'  # Approved leave (both paid and unpaid)
+            elif not data['has_logs']:
+                status = 'red'  # No logs
+            elif total_minutes >= target_minutes:
+                status = 'green'  # >= 7hrs 40mins
+            else:
+                status = 'yellow'  # < 7hrs 40mins but has logs
+            
+            result.append({
+                'date': date_str,
+                'hours': data['hours'],
+                'minutes': data['minutes'],
+                'total_minutes': total_minutes,
+                'status': status,
+                'is_sunday': is_sunday,
+                'is_approved_leave': is_approved_leave,
+                'is_paid_leave': is_paid_leave,
+                'is_unpaid_leave': is_unpaid_leave
+            })
+        
+        # Calculate total expected hours: total_expected_days * 7.67 hours
+        # Note: We already excluded paid leave days from total_expected_days
+        # The 1 paid leave per month is already handled by excluding the first approved leave day
+        total_expected_hours = total_expected_days * (7 + 40/60)  # 7 hours 40 minutes per day
+        total_calculated_hours = total_calculated_minutes / 60
+        
+        return jsonify({
+            "status": "success",
+            "month": target_date.strftime('%Y-%m'),
+            "data": result,
+            "monthly_hours": {
+                "calculated_hours": round(total_calculated_hours, 2),
+                "total_expected_hours": round(total_expected_hours, 2),
+                "calculated_minutes": total_calculated_minutes
+            }
+        })
+    except Exception as e:
+        print(f"USER ATTENDANCE ERROR: {e}")
+        import traceback
+        traceback.print_exc()
+        return jsonify({"status": "error", "message": str(e)}), 500
 
 # ---------------- Monthly Reports (Email) ----------------
 def send_custom_email(to_email, subject, html_content):

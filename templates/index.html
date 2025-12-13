@@ -18,7 +18,32 @@
             <div class="text-2xl font-semibold tracking-wide">
                 <span class="text-white">Office</span><span class="text-sky-300">Scan</span>
             </div>
-            <div id="header-clock" class="text-white/90 text-sm font-mono tracking-widest hidden md:block">--:--</div>
+            <div class="flex items-center gap-4">
+                <div id="header-clock" class="text-white/90 text-sm font-mono tracking-widest hidden md:block">--:--</div>
+                <!-- User Icon with Dropdown -->
+                <div class="relative">
+                    <button id="user-menu-btn" onclick="toggleUserMenu()" class="flex items-center gap-2 focus:outline-none">
+                        <div id="user-avatar" class="w-10 h-10 rounded-full bg-sky-500 flex items-center justify-center text-white font-semibold text-sm">
+                            A
+                        </div>
+                        <svg class="w-4 h-4 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7"></path>
+                        </svg>
+                    </button>
+                    <!-- Dropdown Menu -->
+                    <div id="user-menu" class="hidden absolute right-0 mt-2 w-48 bg-white rounded-lg shadow-lg border border-gray-200 py-1 z-50">
+                        <div class="px-4 py-2 border-b border-gray-200">
+                            <p class="text-sm font-semibold text-gray-900" id="user-menu-name">Employee</p>
+                        </div>
+                        <button onclick="openLeaveForm()" class="w-full text-left px-4 py-2 text-sm text-gray-700 hover:bg-gray-100">
+                            Apply Leave
+                        </button>
+                        <button onclick="handleLogout()" class="w-full text-left px-4 py-2 text-sm text-gray-700 hover:bg-gray-100">
+                            Logout
+                        </button>
+                    </div>
+                </div>
+            </div>
         </div>
     </header>
 
@@ -51,8 +76,135 @@
             </button>
 
             <div id="status" class="mt-4 text-center text-xs font-semibold h-6 text-gray-600"></div>
+            
+            <!-- Monthly Hours Display -->
+            <div id="monthly-hours" class="mt-6 p-4 bg-sky-50 rounded-lg border border-sky-200 hidden">
+                <div class="text-center">
+                    <p class="text-xs text-gray-600 mb-1">Monthly Hours</p>
+                    <p class="text-lg font-semibold text-sky-700">
+                        <span id="calculated-hours">0</span> / <span id="total-hours">0</span> hrs
+                    </p>
+                </div>
+            </div>
+        </div>
+
+        <!-- Calendar Section -->
+        <div id="calendar-section" class="bg-white/95 backdrop-blur-sm p-6 rounded-2xl shadow-2xl w-full max-w-2xl border border-slate-100 mt-6">
+            <div class="flex justify-between items-center mb-4">
+                <h2 class="text-lg font-semibold text-gray-900">Attendance Calendar</h2>
+                <div class="flex items-center gap-2">
+                    <button id="prev-month" onclick="changeMonth(-1)" class="px-3 py-1 text-sky-600 hover:bg-sky-50 rounded transition">‹</button>
+                    <span id="calendar-month" class="text-sm font-semibold text-gray-700 min-w-[120px] text-center"></span>
+                    <button id="next-month" onclick="changeMonth(1)" class="px-3 py-1 text-sky-600 hover:bg-sky-50 rounded transition">›</button>
+                </div>
+            </div>
+            <div id="calendar-loading" class="text-center text-sm text-gray-500 py-4 hidden">Loading...</div>
+            <div id="calendar-container" class="hidden">
+                <div class="grid grid-cols-7 gap-1 mb-2">
+                    <div class="text-center text-xs font-semibold text-gray-600 py-1">M</div>
+                    <div class="text-center text-xs font-semibold text-gray-600 py-1">T</div>
+                    <div class="text-center text-xs font-semibold text-gray-600 py-1">W</div>
+                    <div class="text-center text-xs font-semibold text-gray-600 py-1">T</div>
+                    <div class="text-center text-xs font-semibold text-gray-600 py-1">F</div>
+                    <div class="text-center text-xs font-semibold text-gray-600 py-1">S</div>
+                    <div class="text-center text-xs font-semibold text-gray-400 py-1">S</div>
+                </div>
+                <div id="calendar-grid" class="grid grid-cols-7 gap-1"></div>
+                <div class="mt-4 flex items-center justify-center gap-4 text-xs">
+                    <div class="flex items-center gap-2">
+                        <div class="w-4 h-3 rounded-full bg-green-500 flex items-center justify-center">
+                            <!-- <span class="text-white text-[10px] font-semibold">1</span> -->
+                        </div>
+                        <span class="text-gray-600">≥ 7hrs 40mins</span>
+                    </div>
+                    <div class="flex items-center gap-2">
+                        <div class="w-4 h-3 rounded-full bg-yellow-500 flex items-center justify-center">
+                            <!-- <span class="text-white text-[10px] font-semibold">1</span> -->
+                        </div>
+                        <span class="text-gray-600">&lt; 7hrs 40mins</span>
+                    </div>
+                    <div class="flex items-center gap-2">
+                        <div class="w-4 h-3 rounded-full bg-red-500 flex items-center justify-center">
+                            <!-- <span class="text-white text-[10px] font-semibold">1</span> -->
+                        </div>
+                        <span class="text-gray-600">No logs</span>
+                    </div>
+                    <div class="flex items-center gap-2">
+                        <div class="w-4 h-3 rounded-full bg-blue-500 flex items-center justify-center">
+                        </div>
+                        <span class="text-gray-600">Approved leave</span>
+                    </div>
+                </div>
+            </div>
         </div>
     </main>
+
+    <!-- Leave Application Modal -->
+    <div id="leave-modal" class="hidden fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
+        <div class="bg-white rounded-2xl shadow-2xl w-full max-w-md mx-4 p-6">
+            <div class="flex justify-between items-center mb-4">
+                <h2 class="text-lg font-semibold text-gray-900">Apply for Leave</h2>
+                <button onclick="closeLeaveForm()" class="text-gray-400 hover:text-gray-600">
+                    <svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"></path>
+                    </svg>
+                </button>
+            </div>
+            
+            <form id="leave-form" onsubmit="submitLeaveRequest(event)" class="space-y-4">
+                <div>
+                    <label class="block text-xs font-semibold text-gray-600 mb-2">Start Date</label>
+                    <input 
+                        type="date" 
+                        id="leave-start-date" 
+                        required
+                        class="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-sky-500"
+                    >
+                </div>
+                
+                <div>
+                    <label class="block text-xs font-semibold text-gray-600 mb-2">End Date</label>
+                    <input 
+                        type="date" 
+                        id="leave-end-date" 
+                        required
+                        class="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-sky-500"
+                    >
+                </div>
+                
+                <div>
+                    <label class="block text-xs font-semibold text-gray-600 mb-2">Reason</label>
+                    <textarea 
+                        id="leave-reason" 
+                        required
+                        rows="3"
+                        class="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-sky-500"
+                        placeholder="Enter reason for leave"
+                    ></textarea>
+                </div>
+                
+                <div id="leave-error" class="text-red-600 text-sm hidden"></div>
+                <div id="leave-success" class="text-green-600 text-sm hidden"></div>
+                
+                <div class="flex gap-3">
+                    <button 
+                        type="button"
+                        onclick="closeLeaveForm()"
+                        class="flex-1 px-4 py-2 border border-gray-300 rounded-lg text-sm font-semibold text-gray-700 hover:bg-gray-50"
+                    >
+                        Cancel
+                    </button>
+                    <button 
+                        type="submit"
+                        id="leave-submit-btn"
+                        class="flex-1 px-4 py-2 bg-sky-600 hover:bg-sky-700 text-white rounded-lg text-sm font-semibold"
+                    >
+                        Submit
+                    </button>
+                </div>
+            </form>
+        </div>
+    </div>
 
 <script>
     const API_URL = ""; // empty = same origin (works with Flask)
@@ -69,6 +221,132 @@
     const resultName = document.getElementById('result-name');
     const resultSubtitle = document.getElementById('result-subtitle');
     const resultMeta = document.getElementById('result-meta');
+
+    // --- User Menu Functions ---
+    function toggleUserMenu() {
+        const menu = document.getElementById('user-menu');
+        menu.classList.toggle('hidden');
+    }
+
+    // Close menu when clicking outside
+    document.addEventListener('click', function(event) {
+        const menu = document.getElementById('user-menu');
+        const btn = document.getElementById('user-menu-btn');
+        if (menu && !menu.contains(event.target) && !btn.contains(event.target)) {
+            menu.classList.add('hidden');
+        }
+    });
+
+    async function loadCurrentUser() {
+        try {
+            const response = await fetch(`${API_URL}/api/current-user`);
+            const result = await response.json();
+            
+            if (result.status === 'success') {
+                const employeeName = result.employee_name;
+                const initial = employeeName ? employeeName.charAt(0).toUpperCase() : 'A';
+                
+                // Update avatar
+                document.getElementById('user-avatar').textContent = initial;
+                document.getElementById('user-menu-name').textContent = employeeName;
+            } else {
+                // Not logged in, redirect to login
+                window.location.href = '/login';
+            }
+        } catch (err) {
+            console.error('Error loading user:', err);
+            window.location.href = '/login';
+        }
+    }
+
+    async     function handleLogout() {
+        try {
+            const response = await fetch(`${API_URL}/logout`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' }
+            });
+            
+            const result = await response.json();
+            if (result.status === 'success') {
+                window.location.href = '/login';
+            }
+        } catch (err) {
+            console.error('Logout error:', err);
+            // Still redirect to login on error
+            window.location.href = '/login';
+        }
+    }
+
+    // --- Leave Application Functions ---
+    function openLeaveForm() {
+        document.getElementById('leave-modal').classList.remove('hidden');
+        document.getElementById('user-menu').classList.add('hidden');
+        // Set minimum date to today
+        const today = new Date().toISOString().split('T')[0];
+        document.getElementById('leave-start-date').min = today;
+        document.getElementById('leave-end-date').min = today;
+    }
+
+    function closeLeaveForm() {
+        document.getElementById('leave-modal').classList.add('hidden');
+        document.getElementById('leave-form').reset();
+        document.getElementById('leave-error').classList.add('hidden');
+        document.getElementById('leave-success').classList.add('hidden');
+    }
+
+    async function submitLeaveRequest(event) {
+        event.preventDefault();
+        
+        const startDate = document.getElementById('leave-start-date').value;
+        const endDate = document.getElementById('leave-end-date').value;
+        const reason = document.getElementById('leave-reason').value.trim();
+        const submitBtn = document.getElementById('leave-submit-btn');
+        const errorDiv = document.getElementById('leave-error');
+        const successDiv = document.getElementById('leave-success');
+        
+        // Clear previous messages
+        errorDiv.classList.add('hidden');
+        successDiv.classList.add('hidden');
+        
+        if (new Date(endDate) < new Date(startDate)) {
+            errorDiv.textContent = 'End date must be after start date';
+            errorDiv.classList.remove('hidden');
+            return;
+        }
+        
+        submitBtn.disabled = true;
+        submitBtn.textContent = 'Submitting...';
+        
+        try {
+            const response = await fetch(`${API_URL}/api/leave-request`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ start_date: startDate, end_date: endDate, reason })
+            });
+            
+            const result = await response.json();
+            
+            if (result.status === 'success') {
+                successDiv.textContent = 'Leave request submitted successfully!';
+                successDiv.classList.remove('hidden');
+                setTimeout(() => {
+                    closeLeaveForm();
+                    loadCalendar(); // Refresh calendar
+                }, 1500);
+            } else {
+                errorDiv.textContent = result.message || 'Failed to submit leave request';
+                errorDiv.classList.remove('hidden');
+                submitBtn.disabled = false;
+                submitBtn.textContent = 'Submit';
+            }
+        } catch (err) {
+            console.error('Leave request error:', err);
+            errorDiv.textContent = 'Connection error. Please try again.';
+            errorDiv.classList.remove('hidden');
+            submitBtn.disabled = false;
+            submitBtn.textContent = 'Submit';
+        }
+    }
 
     // --- Camera Setup ---
     async function startCamera() {
@@ -157,6 +435,11 @@
             const result = await response.json();
 
             if (result.status === 'success') {
+                // Store user name in localStorage
+                if (result.name) {
+                    localStorage.setItem('userName', result.name);
+                }
+                
                 const now = new Date();
                 const timeStr = now.toLocaleTimeString('en-IN', { timeZone: 'Asia/Kolkata', hour: '2-digit', minute: '2-digit' });
                 const dateStr = now.toLocaleDateString('en-IN', { timeZone: 'Asia/Kolkata', day: 'numeric', month: 'short' });
@@ -168,6 +451,11 @@
                 } else {
                     statusDiv.className = "mt-4 text-center text-xs font-semibold h-6 text-sky-600";
                     showResult('logout', 'Goodbye', 'Logged Out', result.name, meta);
+                }
+                
+                // Refresh calendar after successful scan
+                if (result.name) {
+                    loadCalendar();
                 }
             } else {
                 // Use user-friendly error message (already simplified by backend)
@@ -187,10 +475,148 @@
         }
     }
 
+    // --- Calendar Functions ---
+    let currentCalendarDate = new Date();
+    
+    function changeMonth(direction) {
+        currentCalendarDate.setMonth(currentCalendarDate.getMonth() + direction);
+        loadCalendar();
+    }
+    
+    async function loadCalendar() {
+        const calendarSection = document.getElementById('calendar-section');
+        const calendarLoading = document.getElementById('calendar-loading');
+        const calendarContainer = document.getElementById('calendar-container');
+        const calendarGrid = document.getElementById('calendar-grid');
+        const calendarMonth = document.getElementById('calendar-month');
+        
+        calendarSection.classList.remove('hidden');
+        calendarLoading.classList.remove('hidden');
+        calendarContainer.classList.add('hidden');
+        
+        const year = currentCalendarDate.getFullYear();
+        const month = currentCalendarDate.getMonth() + 1;
+        
+        // Update month display
+        const monthNames = ['January', 'February', 'March', 'April', 'May', 'June', 
+                          'July', 'August', 'September', 'October', 'November', 'December'];
+        calendarMonth.textContent = `${monthNames[month - 1]} ${year}`;
+        
+        try {
+            const response = await fetch(`${API_URL}/api/user-attendance?year=${year}&month=${month}`);
+            const result = await response.json();
+            
+            if (result.status === 'success') {
+                renderCalendar(result.data, year, month);
+                updateMonthlyHours(result.monthly_hours);
+                calendarLoading.classList.add('hidden');
+                calendarContainer.classList.remove('hidden');
+            } else {
+                calendarLoading.textContent = 'Error loading calendar';
+                calendarLoading.classList.remove('hidden');
+            }
+        } catch (err) {
+            console.error('Calendar load error:', err);
+            calendarLoading.textContent = 'Error loading calendar';
+            calendarLoading.classList.remove('hidden');
+        }
+    }
+    
+    function renderCalendar(attendanceData, year, month) {
+        const calendarGrid = document.getElementById('calendar-grid');
+        calendarGrid.innerHTML = '';
+        
+        // Create a map of date to attendance data
+        const attendanceMap = {};
+        attendanceData.forEach(item => {
+            attendanceMap[item.date] = item;
+        });
+        
+        // Get first day of month and number of days
+        const firstDay = new Date(year, month - 1, 1);
+        const lastDay = new Date(year, month, 0);
+        const daysInMonth = lastDay.getDate();
+        const startingDayOfWeek = firstDay.getDay(); // 0 = Sunday, 1 = Monday, etc.
+        // Adjust to Monday = 0
+        const adjustedStartDay = (startingDayOfWeek + 6) % 7;
+        
+        // Add empty cells for days before month starts
+        for (let i = 0; i < adjustedStartDay; i++) {
+            const emptyCell = document.createElement('div');
+            emptyCell.className = "aspect-square";
+            calendarGrid.appendChild(emptyCell);
+        }
+        
+        // Add cells for each day of the month
+        for (let day = 1; day <= daysInMonth; day++) {
+            const dateStr = `${year}-${String(month).padStart(2, '0')}-${String(day).padStart(2, '0')}`;
+            const dateData = attendanceMap[dateStr];
+            const dateObj = new Date(year, month - 1, day);
+            const dayOfWeek = dateObj.getDay();
+            const isSunday = dayOfWeek === 0;
+            const status = dateData ? dateData.status : 'red';
+            
+            const dayCell = document.createElement('div');
+            
+            if (isSunday) {
+                // Sunday - grey background, no circle
+                dayCell.className = "aspect-square flex items-center justify-center bg-gray-100";
+                const dayNumber = document.createElement('div');
+                dayNumber.className = "text-xs font-medium text-gray-400";
+                dayNumber.textContent = day;
+                dayCell.appendChild(dayNumber);
+            } else {
+                // Working day - circle with status color
+                const circleColor = 
+                    status === 'blue' ? 'bg-blue-500' :
+                    status === 'green' ? 'bg-green-500' : 
+                    status === 'yellow' ? 'bg-yellow-500' : 
+                    'bg-red-500';
+                
+                dayCell.className = `aspect-square flex items-center justify-center relative`;
+                
+                const circle = document.createElement('div');
+                circle.className = `w-8 h-8 rounded-full ${circleColor} flex items-center justify-center`;
+                
+                const dayNumber = document.createElement('div');
+                dayNumber.className = "text-xs font-semibold text-white";
+                dayNumber.textContent = day;
+                
+                circle.appendChild(dayNumber);
+                dayCell.appendChild(circle);
+                
+                // Highlight today with ring
+                const today = new Date();
+                if (year === today.getFullYear() && month === today.getMonth() + 1 && day === today.getDate()) {
+                    circle.classList.add('ring-2', 'ring-sky-500', 'ring-offset-1');
+                }
+            }
+            
+            calendarGrid.appendChild(dayCell);
+        }
+    }
+    
+    function updateMonthlyHours(monthlyHours) {
+        const monthlyHoursDiv = document.getElementById('monthly-hours');
+        const calculatedHoursSpan = document.getElementById('calculated-hours');
+        const totalHoursSpan = document.getElementById('total-hours');
+        
+        if (monthlyHours && calculatedHoursSpan && totalHoursSpan) {
+            calculatedHoursSpan.textContent = monthlyHours.calculated_hours.toFixed(2);
+            totalHoursSpan.textContent = monthlyHours.total_expected_hours.toFixed(2);
+            monthlyHoursDiv.classList.remove('hidden');
+        }
+    }
+    
     // --- Initialize ---
+    loadCurrentUser();
     startCamera();
     updateClock();
     setInterval(updateClock, 1000);
+    
+    // Load calendar on page load
+    document.getElementById('calendar-section').classList.remove('hidden');
+    loadCalendar();
 </script>
 </body>
 </html>
